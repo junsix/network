@@ -8,9 +8,19 @@ set -uo pipefail
 c_reset=$'\033[0m'; c_dim=$'\033[2m'; c_cyan=$'\033[36m'
 c_green=$'\033[32m'; c_yellow=$'\033[33m'; c_bold=$'\033[1m'
 
-step()  { printf "\n${c_bold}${c_cyan}[%s]${c_reset} %s\n" "$1" "$2"; }
+# _pause : LAB_STEP=1 이면 Enter 를 기다린다(한 단계/한 명령씩 보기). q+Enter 면 중단.
+#   TTY 가 없으면(파이프/CI) 멈추지 않고 즉시 통과한다.
+_pause() {
+  [[ "${LAB_STEP:-0}" == "1" ]] || return 0
+  local _ans
+  printf "${c_dim}      Enter ↵ 로 실행  (q+Enter=중단)${c_reset} "
+  IFS= read -r _ans 2>/dev/null </dev/tty || read -r _ans 2>/dev/null || true
+  [[ "${_ans:-}" == "q" ]] && { printf "${c_yellow}      중단함.${c_reset}\n"; exit 0; }
+}
+
+step()  { printf "\n${c_bold}${c_cyan}[%s]${c_reset} %s\n" "$1" "$2"; _pause; }
 note()  { printf "${c_dim}      %s${c_reset}\n" "$*"; }
-run()   { printf "${c_yellow}      $ %s${c_reset}\n" "$*"; eval "$@"; }
+run()   { printf "${c_yellow}      $ %s${c_reset}\n" "$*"; _pause; eval "$@"; }
 title() { printf "\n${c_bold}====== %s ======${c_reset}\n" "$*"; }
 
 # ----- 정리 -----
@@ -69,6 +79,7 @@ gw() { ip netns exec "$1" ip route add default via "$2"; }
 x() {
   local ns="$1"; shift
   printf "${c_yellow}      [%s]$ %s${c_reset}\n" "$ns" "$*"
+  _pause
   ip netns exec "$ns" "$@"
 }
 

@@ -63,7 +63,7 @@ cmd_run() {
   ensure_image
   local f; f="$(resolve "$1")" || die "시나리오를 찾을 수 없음: $1"
   local name; name="$(basename "$f")"
-  docker run --rm "${TTY_FLAGS[@]}" --privileged --cap-add=NET_ADMIN \
+  docker run --rm "${TTY_FLAGS[@]}" -e LAB_STEP --privileged --cap-add=NET_ADMIN \
     "$IMAGE" bash "/lab/scenarios/$name"
 }
 
