@@ -14,6 +14,7 @@
 | 07 | [07-icmp.md](07-icmp.md) | ICMP (echo / time exceeded / unreachable) | L3 보조 | `icmp.mdx` |
 | 08 | [08-nat.md](08-nat.md) | NAT (MASQUERADE, 출발지 IP 변환) | L3 경계 | `advanced/inbound-outbound.mdx` |
 | 09 | [09-vlan.md](09-vlan.md) | VLAN (802.1Q 태그로 L2 격리) | L2 | `ethernet.mdx` |
+| 10 | [10-firewall.md](10-firewall.md) | 방화벽 (iptables DROP vs REJECT) | L3/L4 | `security.mdx` |
 
 ## 직접 보기
 
