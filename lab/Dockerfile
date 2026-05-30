@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       procps \
       iptables \
+      nginx-light \
     && rm -rf /var/lib/apt/lists/*
 
 COPY lib /lab/lib
