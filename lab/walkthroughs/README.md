@@ -16,6 +16,7 @@
 | 09 | [09-vlan.md](09-vlan.md) | VLAN (802.1Q 태그로 L2 격리) | L2 | `ethernet.mdx` |
 | 10 | [10-firewall.md](10-firewall.md) | 방화벽 (iptables DROP vs REJECT) | L3/L4 | `security.mdx` |
 | 11 | [11-l7-lb.md](11-l7-lb.md) | L7 로드밸런서 / 리버스 프록시 (nginx) | L7 | `advanced/cdn-lb.mdx` |
+| 12 | [12-iperf-tcp.md](12-iperf-tcp.md) | iperf3 TCP 처리량/대역폭/손실·재전송 | L4 | `tcp-udp.mdx` |
 
 ## 직접 보기
 
