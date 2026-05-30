@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# labctl: 네트워킹 핸즈온 랩 드라이버
+#
+#   ./labctl build              베이스 이미지 빌드
+#   ./labctl list               시나리오 목록
+#   ./labctl run <name|번호>     시나리오 실행 (예: run 01-arp / run 1 / run arp)
+#   ./labctl shell              랩 컨테이너에 대화형 진입 (직접 토폴로지 실험)
+#
+# 각 시나리오는 새 privileged 컨테이너에서 격리 실행 후 컨테이너째 폐기된다.
+set -euo pipefail
+
+LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE="netlab:latest"
+SCEN_DIR="$LAB_DIR/scenarios"
+
+die() { printf "\033[31m에러: %s\033[0m\n" "$*" >&2; exit 1; }
+
+# TTY가 있으면 대화형(-it), 없으면(-i) 만. 파이프/CI 환경에서도 동작.
+TTY_FLAGS=("-i")
+[[ -t 0 && -t 1 ]] && TTY_FLAGS=("-it")
+
+ensure_image() {
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || {
+    printf "이미지가 없어 먼저 빌드합니다...\n"; cmd_build;
+  }
+}
+
+cmd_build() {
+  printf "베이스 이미지 빌드: %s\n" "$IMAGE"
+  docker build -t "$IMAGE" "$LAB_DIR"
+}
+
+cmd_list() {
+  printf "\n사용 가능한 시나리오:\n\n"
+  local i=0
+  for f in "$SCEN_DIR"/*.sh; do
+    [[ -e "$f" ]] || continue
+    i=$((i+1))
+    local name desc
+    name="$(basename "$f" .sh)"
+    desc="$(grep -m1 '^# 시나리오' "$f" | sed 's/^# 시나리오 [0-9]*: //')"
+    printf "  %2d) %-16s %s\n" "$i" "$name" "$desc"
+  done
+  printf "\n실행: ./labctl run <번호 또는 이름>\n\n"
+}
+
+# 번호/약칭/풀네임 -> 시나리오 파일 경로
+resolve() {
+  local q="$1" i=0
+  for f in "$SCEN_DIR"/*.sh; do
+    [[ -e "$f" ]] || continue
+    i=$((i+1))
+    local name; name="$(basename "$f" .sh)"
+    if [[ "$q" == "$i" || "$q" == "$name" || "$name" == *"$q"* ]]; then
+      echo "$f"; return 0
+    fi
+  done
+  return 1
+}
+
+cmd_run() {
+  [[ $# -ge 1 ]] || die "시나리오를 지정하세요. (./labctl list 로 확인)"
+  ensure_image
+  local f; f="$(resolve "$1")" || die "시나리오를 찾을 수 없음: $1"
+  local name; name="$(basename "$f")"
+  docker run --rm "${TTY_FLAGS[@]}" --privileged --cap-add=NET_ADMIN \
+    "$IMAGE" bash "/lab/scenarios/$name"
+}
+
+cmd_shell() {
+  ensure_image
+  printf "랩 컨테이너 진입. /lab/lib/common.sh 를 source 해서 host/bridge/connect 헬퍼를 쓸 수 있습니다.\n"
+  docker run --rm "${TTY_FLAGS[@]}" --privileged --cap-add=NET_ADMIN "$IMAGE" bash
+}
+
+case "${1:-}" in
+  build) cmd_build ;;
+  list|ls) cmd_list ;;
+  run) shift; cmd_run "$@" ;;
+  shell|sh) cmd_shell ;;
+  *) printf "사용법: ./labctl {build|list|run <name>|shell}\n"; exit 1 ;;
+esac
