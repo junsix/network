@@ -10,6 +10,7 @@
 | 03 | [03-dhcp.md](03-dhcp.md) | DHCP (DORA로 주소 임대) | Auto-config | `dhcp.mdx` |
 | 04 | [04-dns.md](04-dns.md) | DNS (이름 -> 주소 질의/응답) | L2 실무 | `dns.mdx` |
 | 05 | [05-tcp-udp.md](05-tcp-udp.md) | TCP 핸드셰이크 vs UDP | L4 | `tcp-udp.mdx` |
+| 06 | [06-http-tls.md](06-http-tls.md) | HTTP vs HTTPS (평문/암호문, SNI) | L7 | `http.mdx`, `tls.mdx` |
 
 ## 직접 보기
 
