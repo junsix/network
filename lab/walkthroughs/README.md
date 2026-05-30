@@ -17,6 +17,7 @@
 | 10 | [10-firewall.md](10-firewall.md) | 방화벽 (iptables DROP vs REJECT) | L3/L4 | `security.mdx` |
 | 11 | [11-l7-lb.md](11-l7-lb.md) | L7 로드밸런서 / 리버스 프록시 (nginx) | L7 | `advanced/cdn-lb.mdx` |
 | 12 | [12-iperf-tcp.md](12-iperf-tcp.md) | iperf3 TCP 처리량/대역폭/손실·재전송 | L4 | `tcp-udp.mdx` |
+| 13 | [13-dns-rr.md](13-dns-rr.md) | DNS 라운드로빈 vs L7 LB | L7/분산 | `dns.mdx`, `advanced/cdn-lb.mdx` |
 
 ## 직접 보기
 
