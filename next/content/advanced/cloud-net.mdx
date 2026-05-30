@@ -1,0 +1,235 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "17 · Cloud Networking",
+  title: "클라우드 네트워킹",
+  subtitle: (
+    <>
+      <Accent>VPC · 라우트 · PrivateLink · Transit Gateway</Accent>의 멘탈 모델
+    </>
+  ),
+  lead: (
+    <>
+      클라우드는 인터넷 네트워크의 추상화를 한 단계 더 위로 끌어올립니다.
+      VPC는 자기만의 라우팅 테이블·NAT·방화벽을 가진 가상 데이터센터고,
+      그 사이를 연결·격리·보호하는 도구들이 클라우드별로 이름은 다르지만 개념은 거의 같습니다.
+      AWS 용어 기준으로 정리하고 GCP·Azure 매핑을 옆에 둡니다.
+    </>
+  ),
+};
+
+<Eyebrow>VPC</Eyebrow>
+
+## 가상 사설 클라우드: 자기만의 IP 세계
+
+VPC는 RFC 1918 사설 IP 대역을 정의한 격리된 네트워크입니다. 같은 클라우드 안에서도 VPC끼리는 기본적으로 통신이 막혀 있습니다.
+
+<KV>
+  <KVItem term="CIDR 블록">VPC 생성 시 정함. 보통 <code>10.0.0.0/16</code> 같은 사설 대역. 나중에 확장은 까다로움.</KVItem>
+  <KVItem term="Subnet">VPC를 AZ(Availability Zone) × public/private으로 쪼갬. 보통 <code>10.0.1.0/24</code>식.</KVItem>
+  <KVItem term="Route Table">서브넷별 라우팅 결정. 기본은 VPC 내부(<code>10.0.0.0/16 local</code>) + 인터넷 게이트웨이 같은 추가 항목.</KVItem>
+  <KVItem term="Internet Gateway (IGW)">VPC에 인터넷 접근을 부여. public 서브넷의 default route 목적지.</KVItem>
+  <KVItem term="NAT Gateway">private 서브넷이 outbound 인터넷에 나갈 때. SNAT만: 외부에서 들어오는 건 불가.</KVItem>
+  <KVItem term="Egress-only IGW (IPv6)">IPv6용 NAT 대응. IPv6는 NAT가 불필요하지만 outbound만 허용하는 게이트웨이.</KVItem>
+</KV>
+
+### Public vs Private 서브넷
+
+갈림길은 라우트 테이블의 default route(0.0.0.0/0)가 어디로 향하느냐입니다.
+
+<PCBox>
+  <PC tone="good" title="Public Subnet">
+    <ul>
+      <li><code>0.0.0.0/0 → IGW</code></li>
+      <li>퍼블릭 IP 있는 인스턴스는 인터넷에서 직접 도달 가능</li>
+      <li>로드밸런서·bastion이 여기</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="Private Subnet">
+    <ul>
+      <li><code>0.0.0.0/0 → NAT Gateway</code> (또는 없음)</li>
+      <li>인터넷에서 직접 도달 불가</li>
+      <li>앱 서버·DB가 여기</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>방화벽 두 층</Eyebrow>
+
+## Security Group vs Network ACL
+
+<DataTable>
+  <thead><tr><th></th><th>Security Group</th><th>Network ACL</th></tr></thead>
+  <tbody>
+    <tr><td>적용 단위</td><td>ENI (네트워크 인터페이스)</td><td>서브넷</td></tr>
+    <tr><td>상태</td><td>Stateful: outbound 허용하면 응답 자동 허용</td><td>Stateless: 양방향 명시</td></tr>
+    <tr><td>룰 종류</td><td>Allow만 (deny 없음)</td><td>Allow + Deny</td></tr>
+    <tr><td>평가 순서</td><td>모든 룰을 OR (어느 하나라도 match면 허용)</td><td>번호 순서대로 첫 match 적용</td></tr>
+    <tr><td>참조 가능 대상</td><td>다른 SG ID, IP, prefix list</td><td>IP만</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  실무에서는 SG가 주력. ACL은 "특정 IP 차단" 같은 거친 컨트롤. <strong>SG에서 다른 SG를 참조</strong>하는 패턴이 유용: IP 대신 "DB SG에 접근 가능한 건 app SG" 같이 의미 기반.
+</Callout>
+
+<Eyebrow>VPC 간 연결</Eyebrow>
+
+## VPC를 잇는 4가지 방법
+
+<DataTable>
+  <thead><tr><th>방식</th><th>특징</th><th>한계</th></tr></thead>
+  <tbody>
+    <tr><td>VPC Peering</td><td>1:1 직접 연결. 저렴.</td><td>전이 라우팅 불가(A↔B, B↔C라도 A↔C는 별도)</td></tr>
+    <tr><td>Transit Gateway</td><td>허브-스포크. 수천 VPC·온프레미스 한 곳에서 라우팅.</td><td>전송량 비용. 리전당 1개.</td></tr>
+    <tr><td>PrivateLink (VPC Endpoint Service)</td><td>한 VPC의 NLB를 다른 VPC가 endpoint로 노출. 단방향.</td><td>HTTP/TCP만, UDP 미지원</td></tr>
+    <tr><td>VPC Lattice</td><td>L7 서비스 메시 (AWS). 인증·재시도까지 통합.</td><td>새 추상화 학습 비용.</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  CIDR이 겹치는 두 VPC는 peering이나 TGW로 직접 못 잇습니다.
+  해법: PrivateLink로 endpoint만 노출, 또는 한 쪽 NAT.
+</Callout>
+
+<Eyebrow>온프레미스 연결</Eyebrow>
+
+## 데이터센터와 클라우드 잇기
+
+<KV>
+  <KVItem term="VPN (Site-to-Site)">IPsec 터널. 빠르게 구성, 인터넷 경유, 지연·대역폭 가변. ~10 Gbps 한계.</KVItem>
+  <KVItem term="Direct Connect / Cloud Interconnect">전용 광회선. 일정한 지연(보통 1~3ms), 대역폭 보장(1·10·100 Gbps). 비싸고 프로비저닝 수 주.</KVItem>
+  <KVItem term="SD-WAN">여러 회선(인터넷·MPLS·LTE)을 정책 기반으로 묶음. 비용·복원력 절충.</KVItem>
+</KV>
+
+### Direct Connect의 BGP 패턴
+
+전용선이라 해도 결국 BGP 세션을 맺는 일입니다:
+
+<Steps>
+  <li>고객 라우터와 클라우드 라우터가 BGP eBGP 세션 수립</li>
+  <li>고객이 자기 prefix(예: 10.10.0.0/16)를 광고</li>
+  <li>클라우드가 VPC prefix(예: 10.0.0.0/16)를 광고</li>
+  <li>VIF(Virtual Interface) 단위로 격리: public VIF(공용 서비스 접근) vs private VIF(VPC 접근)</li>
+  <li>장애 대비 두 회선을 다른 location에: BGP가 자동 페일오버</li>
+</Steps>
+
+<Eyebrow>인터넷 게이트웨이 외</Eyebrow>
+
+## 인터넷·서비스 접근의 옵션 매트릭스
+
+<DataTable>
+  <thead><tr><th>목적</th><th>도구</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td>인스턴스 → 인터넷 (outbound)</td><td>NAT Gateway</td><td>관리형. AZ별로 하나씩 추천(고가용).</td></tr>
+    <tr><td>인스턴스 → 인터넷 (저비용)</td><td>NAT instance</td><td>EC2에 직접 구성. 저렴하지만 운영 부담.</td></tr>
+    <tr><td>인터넷 → 인스턴스</td><td>Internet Gateway + 퍼블릭 IP/EIP</td><td>방화벽은 SG·ACL로.</td></tr>
+    <tr><td>인터넷 → 서비스 (L7)</td><td>ALB</td><td>HTTP/HTTPS·WebSocket·gRPC, 헤더/경로 라우팅.</td></tr>
+    <tr><td>인터넷 → 서비스 (L4)</td><td>NLB</td><td>TCP/UDP, 정적 IP, 매우 높은 PPS.</td></tr>
+    <tr><td>VPC ↔ AWS 서비스(S3 등)</td><td>VPC Endpoint (Gateway)</td><td>S3·DynamoDB만. 라우트 테이블에 prefix list 자동 추가. 무료.</td></tr>
+    <tr><td>VPC ↔ AWS 서비스 (대부분)</td><td>VPC Endpoint (Interface)</td><td>ENI를 VPC에 박음. AWS PrivateLink 기반. 시간당·GB당 과금.</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  <strong>PrivateLink의 가치</strong>: S3로 가는 트래픽도 인터넷을 안 거치고 AWS 백본 안에서 끝남.
+  보안(데이터 외부 노출 X) + 비용(NAT GW data processing 회피) + 지연 모두 이득.
+  큰 워크로드라면 NAT 비용이 PrivateLink 비용보다 훨씬 큼: <code>aws s3 cp</code>가 NAT GW 통해 나가면 GB당 4.5¢, S3 endpoint면 0¢.
+</Callout>
+
+<Eyebrow>DNS</Eyebrow>
+
+## Route 53 / Cloud DNS의 라우팅 정책
+
+단순 응답을 넘어선 라우팅:
+
+<KV>
+  <KVItem term="Simple">기본. 한 레코드 = 한 응답.</KVItem>
+  <KVItem term="Weighted">A에 70%, B에 30%식. canary 배포에 활용.</KVItem>
+  <KVItem term="Latency-based">사용자의 DNS 리졸버 위치 기준 가장 빠른 리전 선택.</KVItem>
+  <KVItem term="Geolocation">사용자 지역 기준 (legal·compliance에 자주).</KVItem>
+  <KVItem term="Failover">primary 헬스체크 실패 시 secondary로.</KVItem>
+  <KVItem term="Multi-value">여러 IP 응답 (브라우저 client-side LB).</KVItem>
+</KV>
+
+<Callout tone="bad">
+  Route 53의 헬스체크 페일오버는 <strong>TTL + 헬스체크 주기</strong> 합만큼 지연. TTL 60s + 체크 30s = 페일오버까지 ~90초.
+  진짜 빠른 페일오버는 BGP/Anycast가 필요.
+</Callout>
+
+<Eyebrow>리전·AZ</Eyebrow>
+
+## 멀티 AZ vs 멀티 리전
+
+<PCBox>
+  <PC tone="good" title="Multi-AZ (단일 리전)">
+    <ul>
+      <li>AZ 간 1~2ms 지연. 동기 복제 가능.</li>
+      <li>한 AZ 장애에서 자동 복구.</li>
+      <li>리전 광역 장애에는 무력 (S3 단일 리전 장애 같은 케이스).</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="Multi-Region">
+    <ul>
+      <li>리전 간 수십~수백 ms 지연. 동기 복제 거의 불가.</li>
+      <li>법적 데이터 거주(data residency)·전 세계 사용자에 적합.</li>
+      <li>비용·복잡도 큼. 데이터 일관성 모델 결정이 어려움.</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>클라우드별 매핑</Eyebrow>
+
+## AWS · GCP · Azure 용어 사전
+
+<DataTable>
+  <thead><tr><th>개념</th><th>AWS</th><th>GCP</th><th>Azure</th></tr></thead>
+  <tbody>
+    <tr><td>가상 네트워크</td><td>VPC</td><td>VPC (글로벌)</td><td>VNet</td></tr>
+    <tr><td>리전 분할</td><td>Subnet (AZ별)</td><td>Subnet (리전 단위)</td><td>Subnet</td></tr>
+    <tr><td>인터넷 진입</td><td>Internet Gateway</td><td>Default network</td><td>Internet</td></tr>
+    <tr><td>Outbound NAT</td><td>NAT Gateway</td><td>Cloud NAT</td><td>NAT Gateway</td></tr>
+    <tr><td>VPC 연결</td><td>Peering / TGW</td><td>VPC Peering / Network Connectivity Center</td><td>VNet Peering / Virtual WAN</td></tr>
+    <tr><td>전용선</td><td>Direct Connect</td><td>Cloud Interconnect</td><td>ExpressRoute</td></tr>
+    <tr><td>서비스 노출</td><td>PrivateLink</td><td>Private Service Connect</td><td>Private Link</td></tr>
+    <tr><td>L7 LB</td><td>ALB</td><td>Cloud Load Balancing (HTTPS)</td><td>Application Gateway</td></tr>
+    <tr><td>L4 LB</td><td>NLB</td><td>Cloud Load Balancing (TCP/UDP)</td><td>Load Balancer (Standard)</td></tr>
+    <tr><td>DNS</td><td>Route 53</td><td>Cloud DNS</td><td>Azure DNS / Traffic Manager</td></tr>
+    <tr><td>CDN</td><td>CloudFront</td><td>Cloud CDN / Media CDN</td><td>Azure Front Door</td></tr>
+    <tr><td>방화벽</td><td>Security Group + NACL + AWS Firewall</td><td>Firewall Rules</td><td>NSG + Azure Firewall</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>비용</Eyebrow>
+
+## 클라우드 네트워킹의 함정
+
+- **Data egress**: 인터넷으로 나가는 트래픽: 클라우드의 진짜 수익원. AWS는 GB당 ~9¢, 처음 100GB 무료.
+- **AZ 간 트래픽**: 1¢/GB. 사소해 보여도 누적 비용이 커집니다. k8s에서 파드가 다른 AZ의 파드와 통신할 때마다 과금이 붙고, <code>topology.kubernetes.io/zone</code> aware routing으로 줄입니다.
+- **NAT Gateway**: 처리되는 모든 GB당 4.5¢. S3·DynamoDB 트래픽을 VPC endpoint로 빼면 비용이 크게 줄어듭니다.
+- **PrivateLink**: 시간당 ~1¢ + GB당 1¢. 서비스 노출이 적으면 ALB가 더 쌉니다.
+- **Transit Gateway**: VPC attachment 시간당 5¢ + GB당 2¢. 많은 VPC면 가성비 좋지만 적으면 peering이 더 쌉니다.
+
+<Callout>
+  비용 최적화는 보통 <strong>"트래픽을 인터넷·NAT GW·TGW로 안 보내기"</strong>의 게임.
+  VPC Endpoint·내부 LB·캐싱이 가장 큰 레버.
+</Callout>
+
+<Eyebrow>면접 단골</Eyebrow>
+
+## 자주 묻는 질문
+
+- "Subnet과 AZ의 관계는?" → AWS는 1 subnet = 1 AZ. GCP는 subnet이 리전 전체.
+- "두 VPC가 CIDR이 겹친다. 어떻게 통신?" → peering 불가. PrivateLink로 endpoint만 노출, 또는 NAT/SNAT로 IP 변환.
+- "Security Group은 stateful이라는데 정확히 무슨 의미?" → outbound 허용한 흐름의 응답이 자동 허용. conntrack 비유.
+- "RDS를 두 VPC에서 쓰고 싶다. 옵션은?" → RDS Proxy + PrivateLink, 또는 peering + private DNS resolution.
+- "NAT Gateway가 한 AZ에만 있으면 어떤 위험?" → 그 AZ 장애 시 다른 AZ 파드의 outbound 끊김. 모든 AZ에 NAT GW 두는 게 표준.
+- "PrivateLink vs VPC Peering, 언제 어느 걸?" → 단방향 서비스 노출은 PrivateLink. 양방향·여러 서비스는 peering/TGW. 보안 격리가 우선이면 PrivateLink.
+- "TGW가 SPOF인가?" → 리전 내 분산 구성이지만 리전 단위 장애는 동일하게 영향. 멀티 리전 운영 시 TGW peering으로 잇거나 Cloud WAN.

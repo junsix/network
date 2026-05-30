@@ -1,0 +1,174 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "04.8 · L2 Depth",
+  title: "이더넷 · VLAN · STP",
+  subtitle: (
+    <>
+      <Accent>스위치 안에서</Accent> 일어나는 일
+    </>
+  ),
+  lead: (
+    <>
+      ARP가 <code>{`IP → MAC`}</code> 매핑을 다룬다면 이 페이지는 <em>MAC↔포트 · VLAN · loop 방지</em>.
+      스위치 운영의 base이자 사내 LAN 사고의 상당수가 여기서 옵니다.
+    </>
+  ),
+};
+
+<Eyebrow>frame 구조</Eyebrow>
+
+## 이더넷 프레임의 모양
+
+<DataTable>
+  <thead>
+    <tr><th>필드</th><th>크기</th><th>역할</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Preamble + SFD</td><td>8 B</td><td>클럭 동기 · 시작 표시 (NIC가 처리)</td></tr>
+    <tr><td>Destination MAC</td><td>6 B</td><td>목적지 (또는 broadcast / multicast)</td></tr>
+    <tr><td>Source MAC</td><td>6 B</td><td>발신자</td></tr>
+    <tr><td>EtherType</td><td>2 B</td><td>상위 프로토콜 식별</td></tr>
+    <tr><td>Payload</td><td>46~1500 B</td><td>IP · ARP · VLAN tag된 frame 등</td></tr>
+    <tr><td>FCS (CRC32)</td><td>4 B</td><td>전송 오류 검증</td></tr>
+  </tbody>
+</DataTable>
+
+EtherType 주요 값:
+
+<KV>
+  <KVItem term="0x0800">IPv4</KVItem>
+  <KVItem term="0x0806">ARP</KVItem>
+  <KVItem term="0x86DD">IPv6</KVItem>
+  <KVItem term="0x8100">VLAN tag (802.1Q)</KVItem>
+  <KVItem term="0x8863 / 0x8864">PPPoE Discovery / Session</KVItem>
+  <KVItem term="0x88CC">LLDP</KVItem>
+</KV>
+
+MTU는 기본 1500 B. Jumbo frame은 9000 B까지. 경로 전체가 jumbo 지원해야 의미가 있고, 한 hop이 1500이면 PMTUD가 필요해집니다 ([ICMP PMTUD 참조](/docs/icmp#path-mtu-discovery)).
+
+<Eyebrow>MAC 학습</Eyebrow>
+
+## 스위치는 어떻게 알게 되나
+
+허브는 들어온 frame을 *모든 포트*로 보냅니다. 스위치는 *학습*합니다:
+
+<Steps>
+  <li>frame이 포트 3으로 들어옴. source MAC <code>aa:bb</code> → CAM table에 "aa:bb is on port 3" 기록</li>
+  <li>destination MAC <code>cc:dd</code>이 table에 있으면 그 포트로만 전송</li>
+  <li>destination MAC이 table에 없으면 <strong>flood</strong> (모든 포트로 복제)</li>
+  <li>응답이 돌아오면 그 source MAC도 학습 → 다음부터 unicast</li>
+</Steps>
+
+CAM table 엔트리는 *aging*됩니다 (기본 5분). 트래픽 없는 호스트는 빠지고 다시 보내면 한 번 더 flood.
+
+<Callout tone="bad">
+  <strong>MAC table overflow 공격</strong>: 공격자가 가짜 MAC을 빠르게 송신하면 CAM table이 꽉 차서 스위치가 *모든* 트래픽을 flood. 공격자는 도청 가능. 대책: 포트당 MAC 수 제한 (port security).
+</Callout>
+
+<Eyebrow>VLAN</Eyebrow>
+
+## 같은 스위치를 여러 LAN처럼
+
+VLAN (Virtual LAN) 은 하나의 스위치를 *논리적으로 분리*합니다. 같은 VLAN끼리만 L2 통신.
+
+**802.1Q 태깅** (frame에 4 byte 추가):
+- TPID 0x8100 (VLAN frame임을 알림)
+- PCP 3 bit (우선순위, QoS)
+- DEI 1 bit (drop-eligible)
+- VID 12 bit (0~4094, VLAN 번호)
+
+포트 타입:
+
+<DataTable>
+  <thead>
+    <tr><th>타입</th><th>역할</th><th>tag</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Access port</td><td>일반 단말 연결</td><td>untagged (스위치가 한 VLAN에 매핑)</td></tr>
+    <tr><td>Trunk port</td><td>스위치↔스위치, 또는 가상 호스트</td><td>tagged (여러 VLAN frame 운반)</td></tr>
+    <tr><td>Native VLAN</td><td>trunk 위에서 *untagged*로 가는 한 VLAN</td><td>설정 불일치 시 사고 원인</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>VLAN hopping</strong>: 공격자가 *두 번 태깅한 frame* 송신. 첫 스위치가 외부 tag 벗기고 native VLAN으로 보내면 두 번째 스위치는 내부 tag만 보고 다른 VLAN으로 전달. 같은 스위치에 native VLAN으로 들어온 trunk 포트가 있을 때 위험. 대책: native VLAN을 *사용 안 하는 별도 VID*로 두기.
+</Callout>
+
+<Eyebrow>STP</Eyebrow>
+
+## 루프는 broadcast storm을 만든다
+
+스위치 두 대를 두 개의 케이블로 연결하면 broadcast frame이 무한히 돕니다. CPU · 대역폭 모두 폭주. 이걸 막는 게 STP (Spanning Tree Protocol).
+
+<Steps>
+  <li>스위치들이 BPDU (Bridge Protocol Data Unit) 를 주고받아 토폴로지 학습</li>
+  <li>가장 낮은 bridge ID를 가진 스위치가 <strong>root bridge</strong></li>
+  <li>각 비-root 스위치는 root까지의 최단 경로를 가진 포트가 <strong>root port</strong></li>
+  <li>각 세그먼트마다 하나의 <strong>designated port</strong></li>
+  <li>나머지는 <strong>blocked</strong> (frame 전달 안 함)</li>
+</Steps>
+
+블록된 포트는 *대기* 상태. designated 포트가 죽으면 활성화돼 우회 경로가 됨. STP convergence는 30~50초였지만 **RSTP (802.1w)** 는 수 초로 단축. **MSTP (802.1s)** 는 VLAN별 별도 instance.
+
+<KV>
+  <KVItem term="PortFast">edge 포트 (단말 연결) 는 STP 단계 건너뛰고 즉시 forwarding. 단말 부팅 시 DHCP 빠르게.</KVItem>
+  <KVItem term="BPDU Guard">PortFast 포트로 BPDU가 들어오면 즉시 차단. 사용자가 자기 자리에 스위치 꽂는 사고 방지.</KVItem>
+  <KVItem term="Root Guard">"이 포트로 root bridge 자격 BPDU 오면 차단". 토폴로지 보호.</KVItem>
+</KV>
+
+<Eyebrow>LAG · LACP</Eyebrow>
+
+## 여러 link을 하나로 묶기
+
+대역폭 · redundancy를 위해 link 여러 개를 *하나의 논리 link*로:
+
+- **Static LAG**: 양쪽 설정 일치하면 묶음
+- **LACP (802.3ad)**: 두 스위치가 LACPDU로 협상. slow (30s) · fast (1s) 모드
+- frame 분산은 hash 기반 (src / dst MAC · IP · port). 같은 flow는 항상 같은 link로 가야 순서 보장
+
+<Callout>
+  LAG가 한 쪽만 LACP, 다른 쪽은 static이면 *link은 올라오지만 frame이 산발적으로 drop*. 양쪽 모드 일치가 핵심.
+</Callout>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 사이트 운영 흔한 사고
+
+<PCBox>
+  <PC tone="bad" title="broadcast storm">
+    <ul>
+      <li>두 스위치 케이블 이중 연결, STP 비활성</li>
+      <li>CPU 100%, 전 LAN 마비</li>
+      <li>탐지: trap · NMS의 broadcast rate 알람. 대책: STP · BPDU Guard 기본 켜기</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="native VLAN mismatch">
+    <ul>
+      <li>trunk 양쪽의 native VLAN이 다름 → untagged frame이 엉뚱한 VLAN으로</li>
+      <li>탐지: CDP / LLDP 알람. 대책: 양쪽 동일 native VLAN, 또는 native 미사용</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="MAC flapping">
+    <ul>
+      <li>같은 MAC이 두 포트에서 번갈아 보임 → 학습 table 진동</li>
+      <li>원인: 루프, 잘못된 LAG, 또는 NIC bond active-backup 시 정상 신호</li>
+      <li>대책: 알람 + 원인 분석. LAG라면 화이트리스트.</li>
+    </ul>
+  </PC>
+</PCBox>
+
+```bash
+# 진단
+ip -s link                       # 인터페이스 통계
+ethtool eth0                     # 속도 · duplex
+bridge fdb show                  # Linux bridge MAC table
+lldpctl                          # 옆 스위치 정보 (LLDP)
+tcpdump -i eth0 -e -nn vlan      # VLAN frame 확인
+```

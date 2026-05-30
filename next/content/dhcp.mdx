@@ -1,0 +1,171 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "04.5 · Auto-config",
+  title: "DHCP",
+  subtitle: (
+    <>
+      처음 IP를 받는 <Accent>4단계 DORA</Accent>
+    </>
+  ),
+  lead: (
+    <>
+      PC를 켜자마자 IP가 잡히고 인터넷이 열리는 일은 자동이 아닙니다.
+      <strong>D</strong>iscover · <strong>O</strong>ffer · <strong>R</strong>equest · <strong>A</strong>ck
+      4단계 교환이 매번 일어납니다. 가정 공유기, 사무실 스위치, 클라우드 VPC 모두 같은 흐름입니다.
+    </>
+  ),
+};
+
+<Eyebrow>왜 DHCP가 먼저인가</Eyebrow>
+
+## ARP·DNS·HTTP는 IP가 있어야 동작한다
+
+PC가 처음 LAN에 붙으면 자기 IP가 없습니다. ARP로 다른 호스트 MAC을 찾으려 해도 *자기 IP*가 비어 있고, DNS 서버에 질의를 보내려 해도 *DNS 서버 IP*를 모릅니다. DHCP가 이 둘을 동시에 해결합니다: **자기 IP + 게이트웨이 + DNS 서버 + 도메인 + (옵션) NTP·MTU·검색 목록**.
+
+<Eyebrow>애니메이션</Eyebrow>
+
+## DORA 4단계
+
+<Lane
+  nodes={[
+    { label: "PC", meta: <>IP 없음<br/>MAC만 있음</> },
+    { label: "스위치", meta: "브로드캐스트 전달" },
+    { label: "DHCP 서버", meta: <>IP pool<br/>옵션 보유</> },
+  ]}
+  runLabel="▶ DHCP 시작"
+  steps={[
+    { say: "PC: 내 IP가 없음. ff:ff:ff:ff:ff:ff로 \"IP 좀 줄 서버 있나\" 외침" },
+    { fly: { label: "Discover · src 0.0.0.0", cls: "syn", duration: 1400 } },
+    { say: "서버: 풀에서 후보 하나 잡아 Offer. 같은 broadcast라 PC가 받음" },
+    { fly: { label: "Offer · 192.168.0.50", cls: "ack", duration: 1400, from: "right" } },
+    { say: "PC: 그 IP 쓰겠음. 어느 서버 offer 받을지 명시해서 다시 broadcast" },
+    { fly: { label: "Request · 0.50", cls: "syn", duration: 1400 } },
+    { say: "서버: 확정. lease 시간 + gateway + DNS + 도메인 동봉" },
+    { fly: { label: "Ack · 50 + opts", cls: "ack", duration: 1400, from: "right" } },
+    { say: "PC: ip addr에 IP 등장. ARP·DNS·HTTP 모두 사용 가능." },
+  ]}
+/>
+
+<Steps>
+  <li><strong>Discover</strong>: src 0.0.0.0, dst 255.255.255.255. PC는 아직 IP가 없어 source가 0이고 broadcast로 보냅니다.</li>
+  <li><strong>Offer</strong>: 서버가 풀에서 후보 IP를 잡아 응답. 여러 서버가 있으면 여러 Offer가 옵니다.</li>
+  <li><strong>Request</strong>: PC가 어느 Offer를 받을지 명시해서 broadcast. 다른 서버는 자기 offer가 안 골라졌음을 알게 됩니다.</li>
+  <li><strong>Ack</strong>: 선택된 서버가 lease 시간·gateway·DNS·옵션을 동봉해 확정. 이때부터 PC가 IP 사용 가능.</li>
+</Steps>
+
+<Eyebrow>옵션</Eyebrow>
+
+## Ack에 같이 오는 옵션들
+
+DHCP는 IP뿐 아니라 *환경 설정 일체*를 한꺼번에 줍니다.
+
+<DataTable>
+  <thead>
+    <tr><th>Option</th><th>의미</th><th>실무 예</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Subnet Mask</td><td>255.255.255.0</td></tr>
+    <tr><td>3</td><td>Default Gateway</td><td>192.168.0.1</td></tr>
+    <tr><td>6</td><td>DNS Server</td><td>8.8.8.8, 1.1.1.1</td></tr>
+    <tr><td>15</td><td>Domain Name</td><td>company.local</td></tr>
+    <tr><td>26</td><td>Interface MTU</td><td>1500 (또는 9000 jumbo)</td></tr>
+    <tr><td>42</td><td>NTP Server</td><td>time.cloudflare.com</td></tr>
+    <tr><td>51</td><td>Lease Time</td><td>86400초 (24h)</td></tr>
+    <tr><td>119</td><td>DNS Search List</td><td>corp.example.com</td></tr>
+    <tr><td>121</td><td>Classless Static Route</td><td>VPN 경로 푸시 등</td></tr>
+  </tbody>
+</DataTable>
+
+게이트웨이(3)나 DNS(6)가 누락되면 PC는 IP는 받지만 *외부 통신·이름 해석*이 안 됩니다. 사고 신호: "IP는 있는데 인터넷이 안 됨" → `ip route` · `cat /etc/resolv.conf` 확인.
+
+<Eyebrow>Lease · 갱신</Eyebrow>
+
+## Lease 시간과 T1 · T2
+
+받은 IP는 영구가 아닙니다. lease 시간 안에 *갱신*해야 합니다.
+
+<KV>
+  <KVItem term="T1 (50%)">lease의 절반 시점. PC가 *자기 서버에* unicast로 renewal 시도.</KVItem>
+  <KVItem term="T2 (87.5%)">renewal 실패 시 *어느 서버든* broadcast로 rebind 시도.</KVItem>
+  <KVItem term="Expire (100%)">아무도 응답 없으면 IP 반납. 처음부터 Discover 다시.</KVItem>
+</KV>
+
+가정 공유기는 보통 lease 24h, 기업 환경은 1~8h. **너무 길면**: 떠난 단말의 IP가 풀에 안 돌아와 IP 부족. **너무 짧으면**: 갱신 트래픽·서버 부하 증가.
+
+<Eyebrow>IPv6</Eyebrow>
+
+## DHCPv6 · SLAAC
+
+IPv6는 두 가지 자동 구성 방식이 있습니다.
+
+<DataTable>
+  <thead>
+    <tr><th>방식</th><th>주소 출처</th><th>옵션</th><th>실무</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>SLAAC</td><td>RA의 prefix + 자체 interface ID</td><td>DNS·도메인 못 받음 (RDNSS option 필요)</td><td>모바일·홈</td></tr>
+    <tr><td>Stateful DHCPv6</td><td>서버가 할당</td><td>DNS·NTP·도메인 풍부</td><td>기업</td></tr>
+    <tr><td>Stateless DHCPv6 + SLAAC</td><td>주소는 SLAAC, 옵션만 DHCPv6</td><td>혼합</td><td>대규모 LAN</td></tr>
+  </tbody>
+</DataTable>
+
+SLAAC의 NDP 메시지(RA / NS / NA · DAD)는 [ARP의 NDP 섹션](/docs/arp#ipv6에는-arp가-없다-ndp)에서 다룹니다.
+
+<Eyebrow>보안</Eyebrow>
+
+## DHCP Snooping과 DAI
+
+DHCP는 인증이 없습니다. 누구든 "내가 DHCP 서버야"라고 응답할 수 있습니다.
+
+**DHCP Snooping** (스위치 기능):
+- 스위치 포트를 *trusted* / *untrusted*로 구분
+- untrusted 포트에서 오는 *서버측* 응답(Offer / Ack)은 차단
+- trusted 포트(진짜 서버 연결)에서 오는 응답만 통과
+- 스위치는 동시에 *IP↔MAC↔포트* binding table 작성
+
+**Dynamic ARP Inspection (DAI)**:
+- 같은 binding table을 ARP에도 적용
+- 위조 ARP가 binding과 다르면 차단
+- DHCP snooping + DAI = ARP 스푸핑 방어의 짝
+
+<Callout>
+  DHCP snooping을 켜고 trusted 포트 지정을 빼먹으면 <strong>진짜 서버 포함</strong> 모든 서버 응답이 차단됩니다. 신규 단말의 Discover가 시간 초과로 풀에 못 들어가는 사고. 항상 trusted 포트 먼저.
+</Callout>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 만나는 사고 모음
+
+<PCBox>
+  <PC tone="bad" title="Rogue DHCP server">
+    <ul>
+      <li>누군가 사무실 LAN에 공유기를 잘못 꽂으면 그 공유기가 DHCP server</li>
+      <li>일부 단말이 *공유기의 사설 IP*를 받아 본 게이트웨이로 가지 못함</li>
+      <li>대책: DHCP snooping + 포트 보안 + 빠른 탐지 (서버 로그 · trap)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="DHCP starvation">
+    <ul>
+      <li>공격자가 MAC을 바꿔가며 Discover 폭주 → 풀 고갈</li>
+      <li>진짜 단말이 IP를 못 받음 → 그 사이 공격자가 rogue server로 대체</li>
+      <li>대책: 포트당 MAC 수 제한 · rate limit</li>
+    </ul>
+  </PC>
+</PCBox>
+
+```bash
+# 진단
+ip addr show                # 받은 IP 확인
+ip route                    # 게이트웨이 (Option 3)
+cat /etc/resolv.conf        # DNS (Option 6)
+sudo dhclient -v eth0       # 강제 갱신·로그 보기
+journalctl -u NetworkManager | grep -i dhcp
+```

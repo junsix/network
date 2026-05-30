@@ -1,0 +1,186 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   net·viz — base layer
+   Tokens come from tailwind.config.ts. CSS here is reserved for
+   - global resets / typography defaults
+   - keyframes & utilities that don't map cleanly to utilities
+   - MDX content styles (.prose-net)
+   ========================================================= */
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: theme("colors.bg-base");
+  color: theme("colors.fg");
+}
+body {
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Korean reading: break at word/eojeol boundaries, not mid-syllable. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+/* But code/pre stay normal (Latin/identifiers shouldn't wrap weirdly). */
+code, pre, kbd, samp { word-break: normal; overflow-wrap: normal; }
+
+::selection {
+  background: theme("colors.accent-soft");
+  color: theme("colors.fg");
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(94, 106, 210, 0.55),
+    0 0 0 4px theme("colors.bg-base");
+  border-radius: 6px;
+}
+
+/* Hide scrollbar polish */
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* =========================================================
+   Prose — MDX content typography
+   Hierarchy comes from weight + size, NOT from desaturated color.
+   Body stays bright; muted reserved for metadata/eyebrow only.
+   ========================================================= */
+.prose-net {
+  color: theme("colors.fg");
+  font-size: 16px;
+  line-height: 1.78;
+  max-width: 70ch;
+  /* Korean: break at spaces/eojeol boundaries, not mid-word */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.prose-net > * + * { margin-top: 1em; }
+
+/* Body — bright by default; muted is only for explicit metadata classes. */
+.prose-net p,
+.prose-net li {
+  color: theme("colors.fg");
+  font-size: 16px;
+  line-height: 1.78;
+}
+.prose-net p { margin: 0.9em 0; }
+.prose-net p strong,
+.prose-net li strong,
+.prose-net strong {
+  color: theme("colors.fg");
+  font-weight: 600;
+}
+.prose-net p em,
+.prose-net li em { color: theme("colors.fg"); font-style: italic; }
+
+/* Headings — clearer top rhythm, brighter color */
+.prose-net h2 {
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 2.6em 0 0.4em;
+  color: theme("colors.fg");
+  line-height: 1.25;
+}
+.prose-net h3 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 1.9em 0 0.3em;
+  color: theme("colors.fg");
+  line-height: 1.35;
+}
+
+/* Tight rhythm between an <Eyebrow> chip and the heading that follows it */
+.prose-net :is(p, span, div) + h2 { margin-top: 0.4em; }
+
+/* Links */
+.prose-net a {
+  color: theme("colors.accent-bright");
+  text-decoration: underline;
+  text-decoration-color: rgba(94, 106, 210, 0.35);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 200ms cubic-bezier(0.16, 1, 0.3, 1), color 200ms;
+}
+.prose-net a:hover {
+  color: #8B95E5;
+  text-decoration-color: rgba(139, 149, 229, 0.7);
+}
+
+/* Inline code */
+.prose-net code {
+  font-family: theme("fontFamily.mono");
+  font-size: 0.88em;
+  background: theme("colors.bg-elevated");
+  border: 1px solid theme("colors.border-default");
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  color: #DCE0F2;
+  /* Latin code doesn't need keep-all */
+  word-break: break-all;
+}
+
+/* Code blocks */
+.prose-net pre {
+  font-family: theme("fontFamily.mono");
+  background: theme("colors.bg-elevated");
+  border: 1px solid theme("colors.border-default");
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #DCE0F2;
+  overflow: auto;
+  box-shadow: theme("boxShadow.inner-top");
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.prose-net pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Lists */
+.prose-net ul { padding-left: 22px; list-style: disc; margin: 0.7em 0; }
+.prose-net ul li { margin: 7px 0; }
+.prose-net ol { padding-left: 22px; margin: 0.7em 0; }
+.prose-net ol li { margin: 7px 0; }
+
+/* HR */
+.prose-net hr {
+  border: 0;
+  border-top: 1px solid theme("colors.border-default");
+  margin: 2.4em 0;
+}
+
+/* =========================================================
+   Reduced motion
+   ========================================================= */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

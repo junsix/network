@@ -1,0 +1,255 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "06 · Application",
+  title: "DNS",
+  subtitle: (
+    <>
+      사람이 외울 수 있는 이름을 <Accent>기계의 주소로</Accent>
+    </>
+  ),
+  lead: (
+    <>
+      브라우저에 <code>example.com</code>을 입력하면 가장 먼저 일어나는 일이 DNS 조회입니다.
+      DNS는 전 세계에 분산된 거대한 분산 키-값 저장소이며, 캐시와 위임으로 빠르고 확장 가능하지만,
+      그만큼 캐시 신뢰가 망가지면 인터넷 전체가 잘못된 곳을 가리킬 수도 있습니다.
+    </>
+  ),
+};
+
+<Callout>
+  <strong>처음 보는 약어 사전</strong>. 본 페이지에서 정의 없이 등장하는 어휘를 먼저 풀어 둡니다:
+  <ul>
+    <li><strong>MTU</strong> (Maximum Transmission Unit): 한 번에 보낼 수 있는 패킷의 최대 크기. 이더넷 기본 1500바이트.</li>
+    <li><strong>FQDN</strong> (Fully Qualified Domain Name): 끝에 점이 붙은 *완전한* 도메인: <code>www.example.com.</code></li>
+    <li><strong>RTT</strong> (Round-Trip Time): 패킷이 갔다 오는 시간. 한국에서 미국까지 약 150~200ms.</li>
+    <li><strong>BGP</strong>: 인터넷 AS 간 라우팅 프로토콜. 자세히는 <a href="/docs/advanced/bgp">BGP</a> 페이지.</li>
+    <li><strong>LB</strong> (Load Balancer): 트래픽을 여러 backend에 분산하는 장치. 자세히는 <a href="/docs/advanced/cdn-lb">CDN · LB</a> 페이지.</li>
+  </ul>
+</Callout>
+
+<Eyebrow>트리</Eyebrow>
+
+## 이름 공간의 구조
+
+DNS 이름은 오른쪽에서 왼쪽으로 읽습니다. `www.example.com.`의 맨 뒤 점은 루트입니다.
+
+<Diagram>
+  <svg viewBox="0 0 900 220" role="img" aria-label="DNS 트리">
+    <g fontSize="13" fontFamily="JetBrains Mono">
+      <circle cx="450" cy="40" r="22" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.6"/>
+      <text x="450" y="46" textAnchor="middle" fill="#EDEDEF">.</text>
+      <text x="450" y="80" textAnchor="middle" fill="#8A8F98" fontSize="11">root</text>
+      <line x1="450" y1="62" x2="220" y2="122" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <line x1="450" y1="62" x2="450" y2="122" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <line x1="450" y1="62" x2="680" y2="122" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <rect x="180" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="220" y="142" textAnchor="middle" fill="#EDEDEF">com</text>
+      <rect x="410" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="450" y="142" textAnchor="middle" fill="#EDEDEF">org</text>
+      <rect x="640" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="680" y="142" textAnchor="middle" fill="#EDEDEF">kr</text>
+      <line x1="220" y1="152" x2="220" y2="182" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <rect x="160" y="182" width="120" height="30" rx="6" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.6"/>
+      <text x="220" y="202" textAnchor="middle" fill="#EDEDEF">example.com</text>
+      <text x="20" y="208" fill="#8A8F98" fontSize="12" fontFamily="Inter">위임: 각 노드는 "아래는 누구에게 물어봐"의 정보만 알면 된다.</text>
+    </g>
+  </svg>
+</Diagram>
+
+<Eyebrow>애니메이션</Eyebrow>
+
+## 재귀 vs 반복 질의
+
+브라우저가 직접 루트부터 일일이 묻지 않습니다. 보통 ISP/사설망의 **리졸버(recursive resolver)**에게
+"어떻게든 알아내 와"라고 한 번만 묻습니다. 리졸버는 그 뒤에서 권한 서버들을 차례로 두드립니다.
+
+<Lane
+  nodes={[
+    { label: "BR", meta: "Browser" },
+    { label: "RS", meta: <>Recursive<br/>Resolver</> },
+    { label: ".", meta: "Root ." },
+    { label: ".com", meta: "TLD .com" },
+    { label: "auth", meta: <>Authoritative<br/>example.com</> },
+  ]}
+  runLabel="▶ DNS 조회 시작"
+  steps={[
+    { say: "브라우저: 캐시(stub resolver) 미스 → OS 리졸버 → 외부 리졸버로 위임" },
+    { fly: { label: "Q: www.example.com A?", cls: "dns", duration: 900 } },
+    { say: "리졸버: 루트의 hint는 내장. .com TLD 위치 확인" },
+    { fly: { label: "Q: .com NS?", cls: "dns", duration: 1100 } },
+    { fly: { label: "A: gtld-servers", cls: "dns", duration: 1100, from: "right" } },
+    { say: "리졸버 → .com TLD: example.com의 권한 서버는?" },
+    { fly: { label: "Q: example.com NS?", cls: "dns", duration: 1100 } },
+    { fly: { label: "A: ns1.example.com", cls: "dns", duration: 1100, from: "right" } },
+    { say: "리졸버 → 권한 서버: www의 A?" },
+    { fly: { label: "Q: www A?", cls: "dns", duration: 1100 } },
+    { fly: { label: "A: 93.184.216.34 TTL=3600", cls: "dns", duration: 1100, from: "right" } },
+    { say: "리졸버는 결과를 TTL(3600s) 동안 캐시. 브라우저로 응답 반환." },
+    { fly: { label: "→ Browser: 93.184.216.34", cls: "ack", duration: 900, from: "right" } },
+    { say: "이후 같은 이름 조회는 캐시에서 즉시 응답 (수 ms)." },
+  ]}
+/>
+
+<Steps>
+  <li>브라우저 → 리졸버: "<code>www.example.com</code>의 A 레코드?"</li>
+  <li>리졸버 → 루트: ".com TLD 서버는 어디?" (캐시 없을 때만)</li>
+  <li>리졸버 → .com TLD: "example.com의 권한 서버는?"</li>
+  <li>리졸버 → example.com 권한 서버: "www의 A?"</li>
+  <li>받은 IP를 캐시(TTL 동안)한 뒤 브라우저로 응답</li>
+</Steps>
+
+<Eyebrow>레코드</Eyebrow>
+
+## 주요 레코드 타입
+
+<DataTable>
+  <thead><tr><th>타입</th><th>의미</th><th>예시</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td>이름 → IPv4</td><td>example.com → 93.184.216.34</td></tr>
+    <tr><td>AAAA</td><td>이름 → IPv6</td><td>example.com → 2606:2800:220:1::</td></tr>
+    <tr><td>CNAME</td><td>이름 → 다른 이름 (별칭)</td><td>www → example.com</td></tr>
+    <tr><td>MX</td><td>메일 서버</td><td>10 mail.example.com</td></tr>
+    <tr><td>NS</td><td>권한 네임 서버</td><td>ns1.example.com</td></tr>
+    <tr><td>TXT</td><td>임의 텍스트 (SPF, DKIM, 도메인 검증)</td><td>"v=spf1 ..."</td></tr>
+    <tr><td>SRV</td><td>서비스 위치 + 포트</td><td>_sip._tcp ...</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>트레이드오프</Eyebrow>
+
+## 강점과 약점
+
+<PCBox>
+  <PC tone="good" title="왜 잘 동작하나">
+    <ul>
+      <li>위임으로 운영 책임 분산 (각자 자기 도메인만 관리)</li>
+      <li>캐시(TTL) 덕에 대부분의 조회는 1 RTT 내 종료</li>
+      <li>UDP 한 번으로 충분히 짧고 빠름</li>
+      <li>이름→IP 매핑이 분리돼 있어 서비스 이전·확장이 자유로움</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="약점">
+    <ul>
+      <li>응답이 평문: 누가 어떤 사이트에 접속하는지 감청 가능</li>
+      <li>응답을 신뢰할 수밖에 없음 → 캐시 포이즈닝, 스푸핑 위험</li>
+      <li>UDP 기반이라 출발지 위조에 의한 반사·증폭 공격 도구로 악용</li>
+      <li>TTL이 너무 길면 장애 시 회복이 느림, 너무 짧으면 트래픽 ↑</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>진화</Eyebrow>
+
+## DNSSEC · DoT · DoH
+
+<DataTable>
+  <thead><tr><th>기술</th><th>해결하는 문제</th><th>방식</th></tr></thead>
+  <tbody>
+    <tr><td>DNSSEC</td><td>응답 위변조</td><td>레코드에 디지털 서명, 신뢰 사슬 검증</td></tr>
+    <tr><td>DoT (DNS over TLS)</td><td>도청</td><td>853/TCP 위에서 TLS로 암호화</td></tr>
+    <tr><td>DoH (DNS over HTTPS)</td><td>도청 + 차단 회피</td><td>HTTPS(443) 요청으로 위장, 일반 웹 트래픽과 구분 어려움</td></tr>
+    <tr><td>ODoH</td><td>리졸버에 의한 사용자 추적</td><td>중계자가 사용자 신원과 질의를 분리</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  DNSSEC은 "응답의 진위"를 보장하지만, "도청 여부"는 보장하지 않습니다.
+  DoT/DoH는 그 반대로 "암호화"는 하지만 "응답이 진짜인지"는 보장하지 않습니다.
+  둘은 서로 보완 관계입니다.
+</Callout>
+
+<Eyebrow>시니어 디테일</Eyebrow>
+
+## 브라우저에서 외부 리졸버까지: OS 단계
+
+"DNS 조회"는 한 번에 일어나지 않습니다. 브라우저가 외부 리졸버에 닿기 전까지 OS는 다음 순서를 거칩니다.
+
+<Steps>
+  <li><strong>브라우저 in-memory 캐시</strong>: Chrome은 약 1분간 자체 캐시. <code>chrome://net-internals/#dns</code></li>
+  <li><strong>OS 스텁 리졸버 캐시</strong>: Linux는 systemd-resolved/nscd, macOS는 mDNSResponder, Windows는 DNS Client 서비스</li>
+  <li><strong>/etc/hosts</strong>: 정적 매핑. Kubernetes 같은 곳에서 <code>HostAliases</code>로 주입</li>
+  <li><strong>NSS (Name Service Switch)</strong>: <code>/etc/nsswitch.conf</code>의 <code>hosts:</code> 라인이 결정. 보통 <code>files dns</code> 순서. mDNS, LDAP도 가능</li>
+  <li><strong>mDNS</strong>: <code>.local</code> 도메인은 멀티캐스트로 LAN에 질의 (DNS 안 거침)</li>
+  <li><strong>외부 리졸버</strong>: <code>/etc/resolv.conf</code>의 <code>nameserver</code> (대개 ISP/DHCP가 주입한 주소)</li>
+</Steps>
+
+<Callout tone="bad">
+  <strong>운영 함정</strong>: 컨테이너에서 <code>/etc/resolv.conf</code>의 <code>search</code> 도메인이 길면 한 번의 외부 조회가 N+1번이 됨 (Kubernetes의 유명한 "5초 DNS 지연" 버그).
+  K8s에서는 <code>ndots:5</code>가 기본인데, FQDN(끝에 점 붙임)을 쓰면 search 확장을 건너뜀.
+</Callout>
+
+<Eyebrow>크기·전송</Eyebrow>
+
+## 512바이트와 EDNS
+
+원래 DNS over UDP는 **응답 크기 512바이트** 제한이 있었습니다. 넘으면 응답에 TC(truncated) 비트가 켜져서 클라이언트가 TCP로 재시도. 그러나 IPv6·DNSSEC·SRV 등으로 응답이 자주 512를 넘게 되면서 **EDNS(0)** 가 등장:
+
+- 클라이언트가 OPT 레코드로 "나는 4096바이트까지 받을 수 있어"를 광고
+- 서버가 그만큼 보내면 UDP fragmentation 없이 큰 응답 전달
+- 다만 4096은 너무 커서 **IP fragmentation 공격 표면**이 되어 요즘은 **1232바이트**(IPv6 최소 MTU - 헤더)를 권장 ("DNS Flag Day 2020")
+
+<Callout tone="bad">
+  <strong>왜 4096이 위험한가: off-path fragmentation 공격</strong>. 큰 DNS 응답이 IP 단편화되면 첫 조각만 보고 후속 조각을 위조하는 *off-path injection*이 가능(Shulman, DNSpooq 2021). 따라서 EDNS bufsize를 1232로 내리고, 1232 초과 응답은 **TC bit로 TCP fallback** 유도가 표준. 사내 리졸버에 1232 설정이 되어 있는지 점검은 시니어 운영의 기본.
+</Callout>
+
+<Eyebrow>위임 메커닉스</Eyebrow>
+
+## Glue record: 닭과 달걀
+
+<code>example.com</code>의 권한 서버가 <code>ns1.example.com</code>이라면, 그 이름을 풀려고 또 <code>example.com</code>을 물어야 함 → 무한 루프.
+
+해결: 부모 존(<code>.com</code> TLD)이 권한 위임을 응답할 때 NS 이름과 **그 IP까지 함께** 추가 섹션에 끼워 넣음. 이 IP가 **glue record**. 권한 서버 이름이 자기 도메인 안에 있을 때만 필요(in-bailiwick).
+
+<Callout tone="bad">
+  <strong>glue stale 위험</strong>. 부모 존의 glue와 자식 존의 실제 A 레코드가 어긋나면 리졸버마다 다른 IP를 봄. 더 골치 아픈 점: <strong>BIND vs Unbound 동작이 다름</strong> (BIND는 glue 우선 신뢰, Unbound는 자식 존 권한 응답으로 갱신 시도). 2021 Slack 부분 장애, 2016 Dyn 사건의 핵심 토픽. 운영 점검: <code>dig +trace</code>로 부모 ↔ 자식 NS·glue 일치성 정기 확인.
+</Callout>
+
+<Eyebrow>듀얼스택</Eyebrow>
+
+## Happy Eyeballs: IPv4 vs IPv6 우선순위
+
+호스트가 A와 AAAA 둘 다 받았을 때 어느 쪽으로 먼저 연결할지가 문제입니다. IPv6를 우선했더니 망가진 v6 경로 때문에 사용자 화면이 멈춰버린 사건이 많았죠.
+
+**Happy Eyeballs (RFC 8305)** 의 답: 두 주소에 *거의 동시에* TCP를 시작해서 먼저 핸드셰이크 끝나는 쪽 채택. v4를 v6보다 50ms 늦게 시작해 살짝 v6 우선: 망가진 v6면 빠르게 v4로 폴백.
+
+<Eyebrow>네거티브</Eyebrow>
+
+## 없는 이름도 캐시한다
+
+<code>NXDOMAIN</code> 응답도 캐시됩니다. SOA 레코드의 마지막 필드 <code>minimum</code>(또는 응답 자체 TTL 중 작은 값)이 그 기간. **존재하지 않는 이름을 자꾸 묻는 봇 트래픽**을 권한 서버까지 흘러가지 않게 막아주는 장치.
+
+<Eyebrow>운영</Eyebrow>
+
+## TTL 설계의 트레이드오프
+
+<DataTable>
+  <thead><tr><th>TTL</th><th>장점</th><th>단점</th></tr></thead>
+  <tbody>
+    <tr><td>짧음 (30s~5m)</td><td>장애 시 빠른 페일오버, 트래픽 이동 즉시 반영</td><td>리졸버 부하 ↑, 권한 서버 비용 ↑, BGP·CDN 안정성 의존 ↑</td></tr>
+    <tr><td>긴 (1d~7d)</td><td>저비용, 안정</td><td>장애 시 회복까지 TTL만큼 대기, 마이그레이션 어려움</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  실무 절충: 평소엔 길게(예: 1시간), 마이그레이션 *직전*에 짧게(60초) 내려두고 작업 후 다시 올림.
+  공중 리졸버는 종종 권한 TTL을 무시하고 자기 정책으로 캐시함을 기억할 것 (Google, Cloudflare 등).
+</Callout>
+
+<Callout tone="bad">
+  <strong>TTL이 짧다고 페일오버가 빠른 건 아니다</strong>. 흔히 빠지는 함정:
+  <ul>
+    <li><strong>리졸버 TTL floor 강제</strong>: 일부 ISP/공중 리졸버는 *너무 짧은 TTL*에 하한(예: 60s)을 강제. 권한 서버에 30s 박아도 60s로 캐시됨.</li>
+    <li><strong>브라우저·OS·앱 자체 캐시</strong>: Chrome ~60s, Java InetAddress는 기본 영구 캐시 (<code>networkaddress.cache.ttl</code> 명시 안 하면), Go/Python도 라이브러리별 다름.</li>
+    <li><strong>negative cache</strong>: NXDOMAIN도 SOA <code>minimum</code> 동안 캐시 → 새 레코드 추가 직전에 NXDOMAIN 캐시되면 그 시간만큼 invisible.</li>
+    <li><strong>커넥션 풀 재사용</strong>: DNS는 갱신돼도 살아있는 HTTP/2 연결은 옛 IP 그대로 사용.</li>
+  </ul>
+  진짜 빠른 페일오버는 BGP Anycast 또는 LB의 health check + connection draining 조합.
+</Callout>

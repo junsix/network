@@ -1,0 +1,261 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { MetricRow, Metric } from "@/components/ui/Metric";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "10 · Inter-Domain Routing",
+  title: "BGP",
+  subtitle: (
+    <>
+      <Accent>인터넷이라는 그물망</Accent>의 안내자
+    </>
+  ),
+  lead: (
+    <>
+      하나의 회사 안에서는 OSPF/IS-IS 같은 IGP가 최단 경로를 자동으로 찾아줍니다.
+      하지만 <strong>전 세계 7만 개가 넘는 자율 시스템(AS)</strong>을 가로지를 때는 그렇게 단순할 수 없습니다.
+      BGP는 "어디로 갈 수 있는지"가 아니라 "어디로 가게 해 줄 의지가 있는지"를 광고하는,
+      본질적으로 <strong>정책 기반(policy-based) 라우팅</strong> 프로토콜입니다.
+    </>
+  ),
+};
+
+<Eyebrow>AS</Eyebrow>
+
+## 자율 시스템: 인터넷의 구성 단위
+
+AS는 단일한 라우팅 정책 아래 운영되는 네트워크의 묶음입니다.
+ISP·대기업·클라우드 사업자가 각각 ASN(AS Number)을 받습니다: Google은 AS15169, AWS는 AS16509, KT는 AS4766처럼.
+인터넷은 결국 **AS와 AS 사이의 그래프**입니다.
+
+<MetricRow>
+  <Metric value="~75K" label="활성 AS 수" />
+  <Metric value="~960K" label="IPv4 prefix in DFZ" />
+  <Metric value="~200K" label="IPv6 prefix in DFZ" />
+  <Metric value="~5 hops" label="평균 AS path 길이" accent />
+</MetricRow>
+
+<Eyebrow>위상</Eyebrow>
+
+## peering · transit · IX
+
+AS 사이의 관계는 보통 두 가지입니다.
+
+<PCBox>
+  <PC tone="good" title="Peering (대등)">
+    <ul>
+      <li>두 AS가 서로의 고객 트래픽을 무료로 교환</li>
+      <li>주로 비슷한 규모끼리, 비용·지연 절감</li>
+      <li>IX(Internet Exchange)에서 한 번에 여러 AS와 피어링 가능</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Transit (유료 위임)">
+    <ul>
+      <li>작은 AS가 큰 AS에게 돈을 내고 "모든 곳으로 가는 길"을 빌림</li>
+      <li>Tier 1 AS는 transit을 사지 않고 서로 peering만으로 전 세계 도달 가능</li>
+      <li>대부분의 가정·기업은 ISP에게 transit을 구매</li>
+    </ul>
+  </PC>
+</PCBox>
+
+AS는 자기 고객의 prefix는 모든 이웃에게 광고하지만, 다른 곳에서 받은 광고를 또 다른 곳에 그대로 전달할지는 정책에 따라 다릅니다: 그게 "transit을 제공한다"는 의미.
+
+<Eyebrow>eBGP vs iBGP</Eyebrow>
+
+## 두 가지 BGP 세션
+
+<DataTable>
+  <thead><tr><th></th><th>eBGP</th><th>iBGP</th></tr></thead>
+  <tbody>
+    <tr><td>대상</td><td>다른 AS와</td><td>같은 AS 내부 라우터끼리</td></tr>
+    <tr><td>TTL</td><td>보통 1 (직접 연결)</td><td>충분히 크게</td></tr>
+    <tr><td>광고 재전파</td><td>받은 경로를 이웃 eBGP에 다시 광고 가능 (정책에 따라)</td><td>iBGP에서 받은 경로는 다른 iBGP에 재전파 안 함 (루프 방지) → full-mesh / RR 필요</td></tr>
+    <tr><td>NEXT_HOP</td><td>광고 시 자신의 IP로 갱신</td><td>유지 (그래서 iBGP는 IGP로 next-hop이 도달 가능해야 함)</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  iBGP의 full-mesh를 피하기 위해 <strong>Route Reflector</strong>나
+  <strong> Confederation</strong>을 씁니다. 대형 AS에서 라우터 수가 수백 개에 달하면
+  N² 세션은 운영 불가능해지기 때문이죠.
+</Callout>
+
+<Eyebrow>애니메이션</Eyebrow>
+
+## 경로 광고와 변경
+
+링크가 끊기면 BGP는 다른 이웃에게서 들은 경로로 갈아탑니다.
+▶ 버튼을 눌러 경로 광고가 어떻게 흐르고, 끊겼을 때 어떻게 우회하는지 따라가 보세요.
+
+<Lane
+  nodes={[
+    { label: "A1", meta: <>AS65001<br/>고객</> },
+    { label: "A100", meta: <>AS100<br/>(Tier 2)</> },
+    { label: "A200", meta: <>AS200<br/>(Tier 1)</> },
+    { label: "A300", meta: <>AS300<br/>(Tier 1)</> },
+    { label: "A2", meta: <>AS65002<br/>1.2.3.0/24</> },
+  ]}
+  runLabel="▶ 경로 광고 & 재수렴"
+  steps={[
+    { say: "AS65002가 1.2.3.0/24 prefix를 transit provider AS300에 광고" },
+    { fly: { label: "UPDATE 1.2.3.0/24 path=[65002]", cls: "dns", duration: 1200, from: "right" } },
+    { say: "AS300이 이웃 AS200에 재광고 (path에 자기 ASN 추가)" },
+    { fly: { label: "UPDATE path=[300, 65002]", cls: "dns", duration: 1100, from: "right" } },
+    { say: "AS200이 AS100에 광고" },
+    { fly: { label: "UPDATE path=[200, 300, 65002]", cls: "dns", duration: 1100, from: "right" } },
+    { say: "AS100이 자기 고객 AS65001에 광고. 이제 AS65001은 1.2.3.0/24로 가는 경로를 학습." },
+    { fly: { label: "UPDATE path=[100, 200, 300, 65002]", cls: "dns", duration: 1100, from: "right" } },
+    { say: "─── 링크 장애: AS200 ↔ AS300 끊김 ───" },
+    { say: "AS200이 다른 이웃(AS250: 그림엔 없지만 별도 transit peer 가정)을 통한 더 긴 경로로 재수렴" },
+    { fly: { label: "WITHDRAW (old path)", cls: "fin", duration: 1000, from: "right" } },
+    { fly: { label: "UPDATE path=[200, 250, 300, 65002] (longer via AS250)", cls: "dns", duration: 1200, from: "right" } },
+    { say: "수렴 시간: 보통 30초~수 분. 주범은 MRAI 타이머(eBGP 기본 30s), scanner interval, path hunting(가능한 모든 경로 차례로 시도)." },
+  ]}
+/>
+
+<Eyebrow>의사 결정</Eyebrow>
+
+## Best Path Selection: 우선순위 사다리
+
+BGP는 단순한 "거리 벡터"가 아닙니다. 동일한 prefix에 여러 경로가 들어왔을 때 다음 순서로 선택합니다 (Cisco 표준 기준).
+
+<Steps>
+  <li><strong>WEIGHT</strong> (Cisco 전용, 라우터 로컬): 높을수록 선호</li>
+  <li><strong>LOCAL_PREF</strong> (AS 내부 정책): 높을수록 선호. "나가는 트래픽"을 통제하는 주된 손잡이</li>
+  <li><strong>로컬 origin</strong>: 자체 광고 &gt; aggregate &gt; 학습된 경로</li>
+  <li><strong>AS_PATH length</strong>: 짧을수록 선호 (보통의 "거리")</li>
+  <li><strong>Origin type</strong>: IGP &gt; EGP &gt; Incomplete</li>
+  <li><strong>MED</strong> (Multi-Exit Discriminator): 같은 이웃 AS의 여러 진입점 중 선호 표현. 낮을수록 선호</li>
+  <li><strong>eBGP &gt; iBGP</strong></li>
+  <li><strong>IGP cost to NEXT_HOP</strong>: 낮을수록</li>
+  <li><strong>라우터 ID 최소</strong> (tie-break)</li>
+</Steps>
+
+<Callout tone="good">
+  실무에서 자주 만지는 두 손잡이는 <strong>LOCAL_PREF</strong>(나가는 트래픽 정책)과
+  <strong> AS_PATH prepend</strong>(들어오는 트래픽 유인: 일부러 자기 AS 번호를 여러 번 붙여 경로를 길어 보이게 만들어 다른 경로를 선호하게 함).
+</Callout>
+
+<Eyebrow>보안</Eyebrow>
+
+## BGP 하이재킹과 RPKI
+
+BGP는 1989년 설계 당시 "이웃은 정직하다"를 전제했습니다.
+그래서 누군가 "이 prefix는 내 거야"라고 광고하면, 그게 정말인지 검증할 수단이 거의 없었습니다.
+실제로 2008년 파키스탄 ISP가 YouTube prefix를 잘못 광고해 전 세계 YouTube가 수 시간 끊긴 사고,
+2018년 Amazon Route 53 prefix가 하이재킹돼 암호화폐 지갑 사용자가 피해를 본 사고 등이 있었습니다.
+
+<Diagram>
+  <svg viewBox="0 0 900 220" role="img" aria-label="BGP 하이재킹 흐름">
+    <g fontFamily="JetBrains Mono" fontSize="12">
+      <rect x="20" y="40" width="140" height="50" rx="10" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+      <text x="90" y="62" textAnchor="middle" fill="#EDEDEF">정상 소유자</text>
+      <text x="90" y="80" textAnchor="middle" fill="#8A8F98" fontSize="10">AS64500 · 1.2.3.0/24</text>
+      <rect x="20" y="130" width="140" height="50" rx="10" fill="#4a2030" stroke="#F1657A" strokeOpacity="0.6"/>
+      <text x="90" y="152" textAnchor="middle" fill="#EDEDEF">공격자 AS</text>
+      <text x="90" y="170" textAnchor="middle" fill="#8A8F98" fontSize="10">동일 prefix 광고</text>
+      <rect x="700" y="80" width="160" height="60" rx="10" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="780" y="105" textAnchor="middle" fill="#EDEDEF">인터넷 라우터</text>
+      <text x="780" y="124" textAnchor="middle" fill="#8A8F98" fontSize="10">짧은 AS_PATH 선호</text>
+      <defs>
+        <marker id="aB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5BD5A0"/>
+        </marker>
+        <marker id="aBh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#F1657A"/>
+        </marker>
+      </defs>
+      <line x1="160" y1="65" x2="700" y2="100" stroke="#5BD5A0" strokeWidth="2" markerEnd="url(#aB)"/>
+      <text x="270" y="58" fill="#8A8F98">정상 광고 · path=64500</text>
+      <line x1="160" y1="155" x2="700" y2="120" stroke="#F1657A" strokeWidth="2" markerEnd="url(#aBh)" strokeDasharray="4 3"/>
+      <text x="270" y="200" fill="#F1657A">위조 광고 · path=짧음 → 트래픽 흡수</text>
+    </g>
+  </svg>
+</Diagram>
+
+### RPKI: 누가 어떤 prefix를 광고할 수 있는가
+
+RIR(지역 인터넷 레지스트리)가 ROA(Route Origin Authorization)를 발급합니다.
+"AS64500은 1.2.3.0/24를 광고할 자격이 있다"를 디지털 서명으로 증명하는 구조입니다.
+ROV(Route Origin Validation)를 켠 라우터는 ROA와 맞지 않는 광고를 거부합니다.
+
+<DataTable>
+  <thead><tr><th>방어</th><th>대상</th><th>해결</th></tr></thead>
+  <tbody>
+    <tr><td>RPKI + ROV</td><td>잘못된 origin AS</td><td>가장 널리 배포됨, 효과 큼</td></tr>
+    <tr><td>BGPsec</td><td>AS_PATH 위조</td><td>경로 전체 서명, 채택은 낮음</td></tr>
+    <tr><td>IRR 필터</td><td>등록되지 않은 prefix</td><td>전통적 방법, RPKI와 병행</td></tr>
+    <tr><td>MANRS 가이드</td><td>업계 표준 행동</td><td>uRPF, 안티-스푸핑, 협력</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>실무</Eyebrow>
+
+## 오퍼레이터의 손잡이
+
+<KV>
+  <KVItem term="community">광고에 붙이는 태그. "no-export", "transit-customer" 등 정책을 자동화하는 메커니즘.</KVItem>
+  <KVItem term="aggregation">여러 작은 prefix를 큰 prefix로 묶어 광고. 라우팅 테이블 크기와 광고 빈도를 줄임.</KVItem>
+  <KVItem term="route flap damping">불안정한 경로(짧은 시간 내 광고/철회 반복)에 페널티를 줘 일시적으로 무시. 불안정 전파 차단.</KVItem>
+  <KVItem term="GTSM">Generalized TTL Security Mechanism: eBGP 패킷의 TTL을 255로 강제해 원거리 공격자 차단.</KVItem>
+</KV>
+
+<Eyebrow>DDoS 운영</Eyebrow>
+
+## BGP로 트래픽을 *라우팅 layer에서* 잘라내기
+
+DDoS 방어의 가장 깊은 layer. L3/L4 volumetric 공격이 origin에 도달하기 *전*, 인터넷 라우팅 단에서 차단.
+
+### RTBH (Remotely-Triggered Black Hole)
+
+특정 IP로 향하는 트래픽을 *전 세계 라우터에서* 즉시 폐기하도록 BGP로 신호.
+
+<Steps>
+  <li>피해 IP가 식별되면 NOC가 community tag(예: <code>65535:666</code> blackhole)를 붙여 BGP 광고</li>
+  <li>upstream provider가 그 community를 보고 해당 prefix의 next-hop을 <code>null0</code>(폐기)으로 설정</li>
+  <li>공격 트래픽이 *피해자 네트워크에 도달하기 전*에 라우터에서 drop</li>
+  <li>단점: <strong>피해 IP 자체가 인터넷에서 사라짐</strong>. 정상 사용자도 못 도달. 공격자가 이걸 원한 결과일 수도.</li>
+</Steps>
+
+<Callout tone="bad">
+  RTBH는 *마지막 수단*. "비즈니스를 죽이지 않으려고 비즈니스를 죽이는" 트레이드오프. 단일 IP·일시적 공격에 유효, 전체 서비스 IP에 사용 시 정상 사용자도 차단.
+</Callout>
+
+### BGP FlowSpec (RFC 5575 · 8955)
+
+RTBH보다 *세밀한* 차단. 5-tuple (src/dst IP·port·proto·패킷 길이 등) 기준 룰을 BGP로 전파.
+
+<DataTable>
+  <thead><tr><th>RTBH</th><th>FlowSpec</th></tr></thead>
+  <tbody>
+    <tr><td>차단 단위: dst IP</td><td>차단 단위: src/dst IP·port·proto·packet len·TCP flags</td></tr>
+    <tr><td>액션: drop</td><td>액션: drop · rate-limit · redirect to scrubbing · sample</td></tr>
+    <tr><td>전파: 단순 community</td><td>전파: AFI/SAFI 1/133 (IPv4) or 2/133 (IPv6)</td></tr>
+    <tr><td>도입 광범위</td><td>도입 보수적 (operator validation 필수)</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  FlowSpec은 *운영자 간 신뢰* 위에 작동합니다. 잘못 광고하면 라우팅 layer 자체에 영향. RTBH보다 강력한 만큼 *검증된 community*만 받기·자기 prefix 한정 등 *AS 단위* 거버넌스 필수.
+</Callout>
+
+### Anycast scrubbing 진입점
+
+큰 규모(>10Gbps)의 volumetric DDoS는 *self-host로 대응 불가*. BGP로 *피해 trafficを* scrubbing provider(AWS Shield Advanced, Cloudflare Magic Transit, Akamai Prolexic 등)의 Anycast IP로 *redirect*하고, scrubbing center가 정제 후 GRE/IPIP 터널로 origin에 전달.
+
+<KV>
+  <KVItem term="Always-on">평시에도 모든 트래픽이 scrubbing center 경유. 지연 추가지만 즉시 방어.</KVItem>
+  <KVItem term="On-demand">평시는 직결, 공격 감지 시 BGP 광고를 scrubbing prefix로 swing. 지연 0이지만 swing 시점에 *수 분* 누설.</KVItem>
+  <KVItem term="GRE return">Anycast scrubbing은 클라이언트 IP를 보존하기 위해 *origin으로의 return 경로*를 GRE/IPIP 터널로 유지.</KVItem>
+</KV>
+
+<Callout>
+  DDoS 방어의 *layer 분담*은 <a href="/docs/security#ddos-분담">공격과 방어</a> 페이지에 표로 정리되어 있습니다. 본 섹션은 그 표의 *L3/L4 라우팅 layer* 행에 해당하는 운영 디테일입니다.
+</Callout>

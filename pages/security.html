@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>보안 — 공격과 방어 · net·viz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="../index.html">net·viz</a></div>
+      <nav>
+        <a href="../index.html">홈</a>
+        <a href="layers.html">계층</a>
+        <a href="arp.html">ARP</a>
+        <a href="ip-routing.html">IP·라우팅</a>
+        <a href="tcp-udp.html">TCP·UDP</a>
+        <a href="dns.html">DNS</a>
+        <a href="http.html">HTTP</a>
+        <a href="tls.html">TLS</a>
+        <a href="security.html">보안</a>
+        <a href="advanced/bgp.html">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> 09 · Attack & Defense</span>
+      <h1>보안 — 각 계층의 <span class="accent">약점과 방어</span></h1>
+      <p class="lead">
+        네트워크 보안의 기본은 "어디서 누가 무엇을 할 수 있는지"를 정확히 그려보는 것입니다.
+        프로토콜의 설계 가정이 깨지는 순간 — 인증이 없거나, 신뢰가 잘못 두어졌거나 — 거기서 공격이 발생합니다.
+        아래는 대표적인 시나리오와 방어를 계층 순으로 정리한 것입니다.
+      </p>
+      <div class="callout" style="margin-top:18px;">
+        이 페이지의 내용은 교육·방어 목적입니다. 운영 중인 네트워크에 동의 없이 시도하지 마세요.
+      </div>
+    </section>
+
+    <section class="section reveal" id="arp-spoof">
+      <span class="tag-label">01 · L2 MITM</span>
+      <h2>ARP 스푸핑</h2>
+      <p>
+        ARP는 응답을 검증하지 않습니다. 공격자 X가 "192.168.0.1(게이트웨이)은 내 MAC이다"라고
+        피해자 A의 ARP 캐시를 덮어쓰면, A가 외부로 보내는 모든 프레임이 X를 거쳐 갑니다.
+        X가 그대로 게이트웨이로 forwarding해 주면 A는 정상 동작처럼 느끼지만, 도청·변조가 가능해집니다.
+      </p>
+
+      <div class="controls">
+        <button class="btn primary" id="arpSpoofRun">▶ 정상 → 공격 → 방어</button>
+        <button class="btn" id="arpSpoofReset">↺ 초기화</button>
+      </div>
+
+      <div class="diagram" style="padding:18px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;color:var(--fg-muted);text-align:center;margin-bottom:10px;font-family:var(--font-mono);">
+          <div>Victim A<br/>10.0.0.10</div>
+          <div>Attacker X<br/>10.0.0.66</div>
+          <div>Gateway<br/>10.0.0.1</div>
+        </div>
+        <div class="lane" id="arpSpoofLane">
+          <div class="nodes"><div class="node">A</div><div class="node">X</div><div class="node">GW</div></div>
+        </div>
+        <div id="arpSpoofLog" style="margin-top:12px;color:var(--fg-muted);font-size:13px;min-height:140px;font-family:var(--font-mono);"></div>
+      </div>
+
+      <h3>방어</h3>
+      <ul style="color:var(--fg);font-size:14px;line-height:1.8;">
+        <li>스위치에서 <strong>DAI (Dynamic ARP Inspection)</strong> + DHCP snooping</li>
+        <li>중요 호스트에 정적 ARP 항목</li>
+        <li>802.1X로 비인가 단말 자체를 LAN에 못 붙게</li>
+        <li>L7 암호화(TLS): 경로는 빼앗겨도 내용은 못 읽게</li>
+      </ul>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">02 · DNS</span>
+      <h2>DNS 캐시 포이즈닝</h2>
+      <p>
+        DNS 응답은 UDP·평문 기반입니다. 공격자가 리졸버보다 빨리 가짜 응답을 만들어
+        TX ID·소스 포트를 맞추면, 리졸버는 그것을 진짜로 믿고 TTL 동안 캐시합니다.
+        그 캐시를 보는 모든 사용자가 가짜 IP로 안내됩니다.
+      </p>
+
+      <div class="diagram">
+        <svg viewBox="0 0 900 200" role="img" aria-label="DNS 캐시 포이즈닝 흐름">
+          <g font-family="JetBrains Mono" font-size="12">
+            <rect x="20" y="40" width="120" height="50" rx="8" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="80" y="68" text-anchor="middle" fill="#EDEDEF">Resolver</text>
+            <rect x="380" y="20" width="160" height="40" rx="8" fill="#1e4a3a" stroke="#5BD5A0" stroke-opacity="0.5"/>
+            <text x="460" y="44" text-anchor="middle" fill="#EDEDEF">정상 권한 서버</text>
+            <rect x="380" y="120" width="160" height="40" rx="8" fill="#4a2030" stroke="#F1657A" stroke-opacity="0.6"/>
+            <text x="460" y="144" text-anchor="middle" fill="#EDEDEF">Attacker (스푸핑 응답)</text>
+
+            <defs>
+              <marker id="aS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5E6AD2"/>
+              </marker>
+              <marker id="aSr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#F1657A"/>
+              </marker>
+            </defs>
+            <line x1="140" y1="60" x2="380" y2="40" stroke="#5E6AD2" stroke-width="2" marker-end="url(#aS)"/>
+            <text x="170" y="36" fill="#8A8F98">Q: bank.com A?</text>
+
+            <line x1="380" y1="140" x2="140" y2="80" stroke="#F1657A" stroke-width="2" marker-end="url(#aSr)" stroke-dasharray="4 3"/>
+            <text x="170" y="172" fill="#F1657A">A: 6.6.6.6 (위조, ID 추측 성공) — 정상 응답보다 빨리 도착</text>
+          </g>
+        </svg>
+      </div>
+
+      <h3>방어</h3>
+      <ul style="color:var(--fg);font-size:14px;line-height:1.8;">
+        <li><strong>소스 포트 무작위화</strong>(Kaminsky 사건 후 표준화) — 추측 공간을 키움</li>
+        <li><strong>DNSSEC</strong> — 응답의 디지털 서명을 검증</li>
+        <li><strong>DoT/DoH</strong> — 도청·삽입 공격 자체를 차단</li>
+      </ul>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">03 · L4</span>
+      <h2>SYN Flood — 자원 고갈</h2>
+      <p>
+        TCP 서버는 SYN을 받으면 "half-open" 상태로 자원을 잡고 SYN+ACK를 보냅니다.
+        공격자가 출발지 IP를 위조해 수많은 SYN만 던지면, 서버의 백로그 큐가 가득 차서
+        정상 사용자의 연결을 받지 못합니다.
+      </p>
+      <div class="diagram">
+        <svg viewBox="0 0 900 160" role="img" aria-label="SYN flood">
+          <g font-family="JetBrains Mono" font-size="13">
+            <rect x="20" y="40" width="180" height="60" rx="8" fill="#4a2030" stroke="#F1657A" stroke-opacity="0.5"/>
+            <text x="110" y="68" text-anchor="middle" fill="#EDEDEF">Attacker</text>
+            <text x="110" y="86" text-anchor="middle" fill="#8A8F98" font-size="11">src IP 위조 다수</text>
+
+            <rect x="650" y="40" width="200" height="60" rx="8" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="750" y="62" text-anchor="middle" fill="#EDEDEF">Server</text>
+            <text x="750" y="82" text-anchor="middle" fill="#8A8F98" font-size="11">half-open backlog full</text>
+
+            <defs>
+              <marker id="aF" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#F1657A"/>
+              </marker>
+            </defs>
+            <g stroke="#F1657A" stroke-width="2" fill="none" marker-end="url(#aF)">
+              <line x1="200" y1="55" x2="650" y2="55"/>
+              <line x1="200" y1="65" x2="650" y2="65"/>
+              <line x1="200" y1="75" x2="650" y2="75"/>
+              <line x1="200" y1="85" x2="650" y2="85"/>
+            </g>
+            <text x="370" y="36" fill="#F1657A" font-size="12">SYN ... SYN ... SYN ... (응답 받을 의지 없음)</text>
+          </g>
+        </svg>
+      </div>
+
+      <h3>방어</h3>
+      <ul style="color:var(--fg);font-size:14px;line-height:1.8;">
+        <li><strong>SYN cookie</strong>: 백로그를 잡지 않고 응답 안에 상태를 인코딩</li>
+        <li>방화벽·로드밸런서의 SYN proxy / rate limit</li>
+        <li>uRPF, 소스 IP 검증으로 위조 트래픽 일부 차단</li>
+      </ul>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">04 · UDP</span>
+      <h2>반사·증폭 DDoS</h2>
+      <p>
+        공격자가 작은 요청에 큰 응답을 돌려주는 서비스(DNS, NTP, memcached)에
+        피해자의 IP를 출발지로 위조해 요청을 던집니다. 응답은 피해자에게 쏟아져,
+        공격자는 자기 대역폭의 수십~수만 배를 폭격에 동원할 수 있습니다.
+      </p>
+      <table>
+        <thead><tr><th>서비스</th><th>대략적 증폭률</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>DNS (ANY)</td><td>30~50x</td><td>큰 레코드(특히 DNSSEC)</td></tr>
+          <tr><td>NTP (monlist)</td><td>~500x</td><td>최근 클라이언트 목록 반환</td></tr>
+          <tr><td>memcached</td><td>~50,000x</td><td>대량 키 응답 (인증 부재)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>방어</h3>
+      <ul style="color:var(--fg);font-size:14px;line-height:1.8;">
+        <li>ISP의 <strong>BCP38</strong>(출발지 위조 차단) — 가장 근본적</li>
+        <li>증폭 가능한 서비스를 인터넷에 노출하지 않음</li>
+        <li>응답 크기 제한, 인증 강제</li>
+        <li>방어 측: CDN/anycast로 트래픽 분산, 스크러빙 센터</li>
+      </ul>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">05 · 비교</span>
+      <h2>MITM의 다양한 얼굴</h2>
+      <table>
+        <thead><tr><th>계층</th><th>기법</th><th>본질</th><th>TLS면 막히는가?</th></tr></thead>
+        <tbody>
+          <tr><td>L2</td><td>ARP 스푸핑</td><td>같은 LAN에서 경로 가로채기</td><td>내용은 못 봄. 경로는 가로채짐.</td></tr>
+          <tr><td>L2/3</td><td>Rogue DHCP</td><td>가짜 게이트웨이/DNS 주입</td><td>일부 차단. 사용자가 경고 무시 시 위험.</td></tr>
+          <tr><td>L3</td><td>BGP 하이재킹</td><td>광역 라우팅을 가로챔</td><td>내용은 못 봄. RPKI로 일부 완화.</td></tr>
+          <tr><td>L7</td><td>HTTPS 다운그레이드 / SSL strip</td><td>HTTP로 끌어내려 평문 노출</td><td><strong>HSTS</strong>로 차단 가능.</td></tr>
+          <tr><td>L7</td><td>잘못된 CA / 사설 루트 설치</td><td>가짜 인증서를 신뢰</td><td>CT 로그·핀닝으로 완화.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section reveal" id="defense">
+      <span class="tag-label">방어 패턴</span>
+      <h2>심층 방어 — 한 군데에만 의존하지 않기</h2>
+      <p>
+        모든 보안 사고의 공통점은 "한 줄의 방어가 무너지면 끝"인 구조였다는 것입니다.
+        다음과 같이 계층마다 독립적인 방어를 두면 한 곳이 뚫려도 전체가 무너지지 않습니다.
+      </p>
+      <div class="bento reveal stagger" style="margin-top:18px;">
+        <div class="card spot b-span-2">
+          <span class="ord">01</span>
+          <h3>Segmentation</h3>
+          <p>VLAN/서브넷/보안 그룹으로 폭발 반경을 좁히기. 서버는 서버끼리, 단말은 단말끼리.</p>
+        </div>
+        <div class="card spot b-span-2">
+          <span class="ord">02</span>
+          <h3>Authentication & Integrity</h3>
+          <p>802.1X, mTLS, 서명된 응답(DNSSEC), 코드 서명. "출처가 누구냐"를 매번 확인.</p>
+        </div>
+        <div class="card spot b-span-2">
+          <span class="ord">03</span>
+          <h3>Confidentiality</h3>
+          <p>TLS, IPsec, 디스크/메시지 암호화. 경로가 빼앗겨도 내용은 무사하게.</p>
+        </div>
+        <div class="card spot b-span-2">
+          <span class="ord">04</span>
+          <h3>Observability</h3>
+          <p>플로우 로그, IDS/EDR, 이상 탐지. 모르면 막을 수 없다 — 보이게 하는 것 자체가 방어.</p>
+        </div>
+        <div class="card spot b-span-2">
+          <span class="ord">05</span>
+          <h3>Least Privilege</h3>
+          <p>네트워크 ACL, IAM, 토큰 범위 제한. 침해되어도 할 수 있는 일을 줄임.</p>
+        </div>
+        <div class="card spot b-span-2">
+          <span class="ord">06</span>
+          <h3>Zero Trust</h3>
+          <p>"내부망이라 안전하다" 가정을 버리기. 매 요청마다 신원·기기·권한을 다시 확인.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">체크리스트</span>
+      <h2>실무 점검</h2>
+      <ol class="steps">
+        <li>모든 외부 트래픽 HTTPS, HSTS 활성화</li>
+        <li>인증서 자동 갱신(ACME), 만료 알람</li>
+        <li>리졸버에 DoT/DoH 적용, 가능한 곳에 DNSSEC 검증</li>
+        <li>스위치에 DAI/DHCP snooping, 게스트망 분리</li>
+        <li>방화벽: 기본 거부, 명시 허용. 출발지 IP 검증(BCP38) 가능 영역에서</li>
+        <li>L7: WAF + 입력 검증 + 의존성 취약점 스캔</li>
+        <li>관측: 흐름 로그, DNS 로그, 인증 시도 로그 보관·경보</li>
+        <li>모의훈련: 정기적인 침해사고 대응 훈련(테이블탑·기술훈련)</li>
+      </ol>
+    </section>
+
+    <p class="foot">시작 페이지로: <a href="../index.html">홈 →</a></p>
+  </main>
+
+  <script src="../js/common.js"></script>
+  <script>
+    const lane = document.getElementById("arpSpoofLane");
+    const log = document.getElementById("arpSpoofLog");
+    const append = (m) => { const d = document.createElement("div"); d.textContent = "› " + m; log.appendChild(d); };
+    document.getElementById("arpSpoofReset").onclick = () => { log.innerHTML = ""; lane.querySelectorAll(".pkt").forEach(p => p.remove()); };
+    document.getElementById("arpSpoofRun").onclick = async () => {
+      log.innerHTML = "";
+      append("[정상] A는 GW의 MAC을 알고 외부로 트래픽 송신");
+      await NetViz.flyPacket(lane, { label: "to GW (정상)", cls: "data", duration: 1100 });
+      append("[공격] X가 'I am GW' Gratuitous ARP를 LAN에 뿌림");
+      await NetViz.flyPacket(lane, { label: "ARP: 0.1 is at X-MAC", cls: "fin", duration: 1100 });
+      append("A의 ARP 캐시가 GW=X-MAC으로 덮어쓰임");
+      append("[MITM] 이제 A의 외부 트래픽은 X를 거쳐 GW로 흐름");
+      await NetViz.flyPacket(lane, { label: "to 'GW' (실제는 X)", cls: "data", duration: 1100 });
+      await NetViz.flyPacket(lane, { label: "X → GW 전달 (도청 가능)", cls: "data", duration: 1100 });
+      append("[방어] 스위치의 DAI가 DHCP snooping과 비교해 위조 ARP를 차단");
+      await NetViz.flyPacket(lane, { label: "DAI: drop forged ARP", cls: "ack", duration: 1000 });
+      append("정상 매핑 복원. 추가로 TLS가 적용되어 있다면 X는 내용을 보지 못함.");
+    };
+  </script>
+</body>
+</html>

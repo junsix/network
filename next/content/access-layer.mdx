@@ -1,0 +1,167 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "04.9 · Physical Access",
+  title: "WiFi · PPPoE · mDNS",
+  subtitle: (
+    <>
+      <Accent>물리 액세스</Accent>의 세 모양
+    </>
+  ),
+  lead: (
+    <>
+      내 PC가 물리적으로 네트워크에 붙는 시나리오는 흔히 세 가지: 사무실 · 공공장소의 WiFi 인증,
+      가정 인터넷의 PPPoE 다이얼업, 그리고 LAN 내부 기기를 <em>이름으로</em> 찾는 mDNS.
+      셋 다 IP를 받기 <em>직전</em>의 일들입니다.
+    </>
+  ),
+};
+
+<Eyebrow>WiFi 접속</Eyebrow>
+
+## SSID 발견부터 4-way handshake까지
+
+<Steps>
+  <li><strong>Probe</strong>: 클라이언트가 주변 AP에 probe request 송신, AP는 probe response로 SSID · 암호화 방식 알림</li>
+  <li><strong>Authenticate</strong>: open system (인증 없음) 또는 shared key 인증</li>
+  <li><strong>Associate</strong>: 클라이언트가 특정 AP에 associate request → AP가 응답해 association ID 부여</li>
+  <li><strong>4-way handshake</strong> (WPA2 / WPA3): 세션 키 협상</li>
+</Steps>
+
+4-way handshake는 *암호화 키 도출*이 핵심입니다:
+
+<KV>
+  <KVItem term="PMK (Pairwise Master Key)">PSK (pre-shared key, "WiFi 비밀번호") 또는 802.1X EAP로부터 도출. 양쪽이 미리 공유.</KVItem>
+  <KVItem term="ANonce / SNonce">AP와 클라이언트가 서로에게 보내는 무작위 값. 매 세션마다 다름.</KVItem>
+  <KVItem term="PTK (Pairwise Transient Key)">PMK + ANonce + SNonce + 양측 MAC → 이 세션 전용 키. 유니캐스트 암호화에 사용.</KVItem>
+  <KVItem term="GTK (Group Temporal Key)">AP가 모든 클라이언트에 같이 뿌리는 키. broadcast / multicast 암호화.</KVItem>
+</KV>
+
+<Eyebrow>WPA2 vs WPA3</Eyebrow>
+
+## SAE가 무엇을 바꾸나
+
+WPA2-PSK의 약점: 4-way handshake를 캡처해두면 *오프라인 사전 공격*으로 PSK를 뚫을 수 있습니다.
+
+**WPA3-SAE (Simultaneous Authentication of Equals)** 는 *온라인에서만* 인증 시도가 가능하도록 설계:
+- handshake 캡처해도 PSK를 추출 불가
+- forward secrecy: 한 세션 키가 깨져도 과거 · 미래 세션은 안전
+- 비밀번호 약해도 무차별 공격이 사실상 무력화
+
+기업은 PSK 대신 **802.1X + EAP + RADIUS**:
+
+<Steps>
+  <li>클라이언트 (supplicant) → AP (authenticator): EAP-Start</li>
+  <li>AP → RADIUS server: 인증 요청 위임 (AAA 위임)</li>
+  <li>EAP-PEAP / EAP-TLS 등으로 사용자 · 인증서 검증</li>
+  <li>RADIUS server: Accept + PMK 동봉</li>
+  <li>AP는 PMK 받아 4-way handshake</li>
+</Steps>
+
+사용자가 회사 노트북을 켤 때 *AD 계정으로* WiFi가 자동 인증되는 흐름이 이것입니다. PSK 공유 없이 사용자별 추적 · 해지 가능.
+
+<Eyebrow>PPPoE</Eyebrow>
+
+## 홈 인터넷의 다이얼업
+
+한국 KT · SK · LG, 일본 NTT, 유럽 일부 ISP가 사용하는 가정 인터넷 접속 방식. *Ethernet 위에 PPP*를 얹어 사용자 인증 · IP 할당 · 세션 관리를 합니다.
+
+<Steps>
+  <li><strong>PADI</strong> (Discovery Initiation): 클라이언트가 broadcast로 access concentrator 탐색</li>
+  <li><strong>PADO</strong> (Offer): 한 개 이상의 concentrator가 응답</li>
+  <li><strong>PADR</strong> (Request): 클라이언트가 어느 concentrator 선택해 송신</li>
+  <li><strong>PADS</strong> (Session-confirmation): session ID 부여 → PPP 세션 시작</li>
+  <li>이후 PAP / CHAP로 사용자 인증 → IPCP로 IP 할당</li>
+</Steps>
+
+PPPoE는 frame에 8 byte overhead를 추가합니다 (PPPoE header 6 + PPP 2). 그래서 MTU가 **1492** (1500 - 8). 이걸 모르면 PMTUD blackhole의 단골 원인 ([ICMP PMTUD 참조](/docs/icmp#path-mtu-discovery)).
+
+<Callout>
+  공유기를 *PPPoE 모드*가 아닌 *DHCP 모드*로 설정하면 ISP가 PPP 세션을 못 만들어 인터넷이 안 됩니다. KT · SK는 보통 ID / PW 입력하는 PPPoE 모드.
+</Callout>
+
+<Eyebrow>mDNS</Eyebrow>
+
+## LAN 안에서 이름으로 찾기
+
+다른 페이지에서는 DNS 서버에 질의를 보냈지만, *LAN 내부 프린터 · AirPlay · Chromecast*에 매번 DNS 등록을 하기는 불편합니다. 그래서 mDNS:
+
+<DataTable>
+  <thead>
+    <tr><th>속성</th><th>값</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>포트</td><td>UDP 5353</td></tr>
+    <tr><td>주소</td><td>IPv4 224.0.0.251 / IPv6 ff02::fb (multicast)</td></tr>
+    <tr><td>도메인</td><td><code>.local</code> (TLD 예약)</td></tr>
+    <tr><td>표준</td><td>RFC 6762 (mDNS) + RFC 6763 (DNS-SD)</td></tr>
+  </tbody>
+</DataTable>
+
+<Steps>
+  <li>"printer.local의 주소"를 알고 싶음 → 224.0.0.251로 multicast 질의</li>
+  <li>같은 LAN의 printer가 자기 IP를 multicast로 응답 (다른 호스트도 같이 캐싱)</li>
+  <li>서비스 발견 (DNS-SD): <code>_http._tcp.local</code> · <code>_ipp._tcp.local</code> · <code>_airplay._tcp.local</code> 같은 *서비스 이름*으로 질의 → 그 서비스를 광고 중인 모든 호스트가 응답</li>
+</Steps>
+
+Apple의 Bonjour, Linux의 Avahi가 mDNS · DNS-SD 구현체. AirDrop · AirPlay · Chromecast · HomeKit · 프린터 발견 전부 이 위에서 동작합니다.
+
+<Eyebrow>LLMNR</Eyebrow>
+
+## Windows의 옛 mDNS 대응
+
+mDNS와 비슷한 일을 하는 Microsoft 표준:
+
+<DataTable>
+  <thead>
+    <tr><th></th><th>mDNS</th><th>LLMNR</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>RFC</td><td>6762 (표준)</td><td>4795 (informational)</td></tr>
+    <tr><td>주소</td><td>224.0.0.251 / ff02::fb</td><td>224.0.0.252 / ff02::1:3</td></tr>
+    <tr><td>포트</td><td>UDP 5353</td><td>UDP 5355</td></tr>
+    <tr><td>도메인</td><td>.local (예약)</td><td>임의 single-label</td></tr>
+  </tbody>
+</DataTable>
+
+LLMNR은 *NetBIOS-NS의 후속*인데 보안 취약 (LLMNR poisoning 공격) 이 알려져 최근 Windows는 비활성화 권장. Apple · Linux는 mDNS만.
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 액세스 계층 사고 모음
+
+<PCBox>
+  <PC tone="bad" title="WiFi roaming 끊김">
+    <ul>
+      <li>AP 옮겨갈 때마다 4-way handshake 또는 EAP 재인증 → 수백 ms 끊김</li>
+      <li>대책: 802.11r (Fast Transition), 802.11k / v 같은 roaming 보조</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="PPPoE MTU 1492 모르고 1500">
+    <ul>
+      <li>큰 패킷이 ISP 라우터에서 fragment 또는 drop</li>
+      <li>웹 페이지 일부 안 뜸 · VPN 안 됨</li>
+      <li>대책: 공유기 WAN 인터페이스 MTU 1492, TCP MSS clamping 켜기</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="mDNS 트래픽 폭주">
+    <ul>
+      <li>대규모 LAN (수백 단말) 에 mDNS 켜진 단말이 많으면 multicast가 모든 포트로</li>
+      <li>WiFi에서 multicast는 *가장 느린 rate*로 전송 → 무선 성능 저하</li>
+      <li>대책: IGMP snooping · mDNS gateway · VLAN 분리</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="rogue AP · evil twin">
+    <ul>
+      <li>공격자가 같은 SSID · 강한 신호의 AP 띄움 → 클라이언트가 자동 연결</li>
+      <li>중간자 도청 · 자격증명 탈취</li>
+      <li>대책: WPA3 · 인증서 검증 (EAP-TLS) · WIPS</li>
+    </ul>
+  </PC>
+</PCBox>

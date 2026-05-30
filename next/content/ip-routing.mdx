@@ -1,0 +1,265 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "03 · Network (L3)",
+  title: "IP & 라우팅",
+  subtitle: (
+    <>
+      <Accent>서로 다른 네트워크</Accent>를 가로지르기
+    </>
+  ),
+  lead: (
+    <>
+      같은 LAN을 벗어나는 순간, 이더넷 브로드캐스트만으론 상대를 찾을 수 없습니다.
+      IP는 "전 세계 어디든 도달할 수 있는 주소 체계"를, 라우팅은 "다음 한 걸음을 어디로 보낼지"를 정의합니다.
+    </>
+  ),
+};
+
+<Eyebrow>주소</Eyebrow>
+
+## IP 주소와 서브넷
+
+IPv4 주소는 32비트, 흔히 `192.168.1.42`처럼 8비트씩 점으로 끊어 표현합니다.
+뒤에 붙은 `/24`는 "앞의 24비트가 네트워크 부분"이라는 뜻으로,
+같은 네트워크끼리는 라우터를 거치지 않고 직접 통신합니다.
+
+<Diagram>
+  <svg viewBox="0 0 900 220" role="img" aria-label="서브넷 마스크 비교">
+    <g fontFamily="JetBrains Mono" fontSize="13">
+      <text x="20" y="30" fill="#8A8F98">192.168.1.42 / 24</text>
+      <g transform="translate(20,50)">
+        <rect x="0" y="0" width="160" height="36" rx="6" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <text x="80" y="22" textAnchor="middle" fill="#EDEDEF">Network (24)</text>
+        <rect x="160" y="0" width="60" height="36" rx="6" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+        <text x="190" y="22" textAnchor="middle" fill="#EDEDEF">Host (8)</text>
+        <text x="0" y="60" fill="#8A8F98" fontSize="12">→ 한 서브넷에 254대 (host 8bit → 2⁸ - 2)</text>
+      </g>
+      <text x="500" y="30" fill="#8A8F98">10.0.0.42 / 8</text>
+      <g transform="translate(500,50)">
+        <rect x="0" y="0" width="60" height="36" rx="6" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <text x="30" y="22" textAnchor="middle" fill="#EDEDEF">Net (8)</text>
+        <rect x="60" y="0" width="240" height="36" rx="6" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+        <text x="180" y="22" textAnchor="middle" fill="#EDEDEF">Host (24)</text>
+        <text x="0" y="60" fill="#8A8F98" fontSize="12">→ 한 서브넷에 1,600만대 이상</text>
+      </g>
+      <text x="20" y="150" fill="#EDEDEF" fontSize="13" fontFamily="Inter">핵심 질문: "내가 보낼 목적지 IP가 내 서브넷에 속하는가?"</text>
+      <text x="20" y="172" fill="#8A8F98" fontSize="13" fontFamily="Inter">YES → ARP로 같은 LAN에서 바로 전달</text>
+      <text x="20" y="192" fill="#8A8F98" fontSize="13" fontFamily="Inter">NO  → 기본 게이트웨이(라우터)의 MAC으로 프레임 송신</text>
+    </g>
+  </svg>
+</Diagram>
+
+<Eyebrow>홉 단위</Eyebrow>
+
+## 라우팅: "다음 홉"의 연속
+
+라우터는 전 세계 경로를 다 외우지 않습니다. 다만 **다음에 어디로 던질지**만 알고 있고,
+그 다음 라우터가 또 다음 홉을 알고 있는 식으로 패킷이 흘러갑니다. 한 홉을 지날 때마다
+TTL이 1씩 줄어들고, 0이 되면 폐기됩니다(루프 방지).
+
+<Lane
+  nodes={[
+    { label: "A", meta: <>Host A<br/>10.0.1.5</> },
+    { label: "R1" },
+    { label: "R2" },
+    { label: "R3" },
+    { label: "B", meta: <>Host B<br/>203.0.113.9</> },
+  ]}
+  runLabel="▶ 패킷 라우팅 시작"
+  steps={[
+    { say: "A: 목적지 203.0.113.9는 내 서브넷이 아님 → 기본 게이트웨이(R1)로 송신" },
+    { fly: { label: "src=10.0.1.5 → dst=203.0.113.9  ttl=64", cls: "data", duration: 1400 } },
+    { say: "R1: 라우팅 테이블 lookup → 다음 홉 R2. TTL 63 감소." },
+    { fly: { label: "→ R2  ttl=63", cls: "data", duration: 1200 } },
+    { say: "R2: 다음 홉 R3. TTL 62." },
+    { fly: { label: "→ R3  ttl=62", cls: "data", duration: 1200 } },
+    { say: "R3: 목적지가 직접 연결된 서브넷 → ARP로 B의 MAC 찾아 전달." },
+    { fly: { label: "→ B  delivered", cls: "ack", duration: 1200 } },
+    { say: "도착. 응답은 거꾸로 같은 또는 다른 경로를 따라온다(비대칭 라우팅 가능)." },
+  ]}
+/>
+
+<Eyebrow>트레이드오프</Eyebrow>
+
+## IP의 특징
+
+<PCBox>
+  <PC tone="good" title="강점">
+    <ul>
+      <li>주소만 있으면 전 세계 어디든 도달 가능 (확장성)</li>
+      <li>경로가 막히면 다른 길로 우회 가능 (메시 토폴로지)</li>
+      <li>상위 계층(TCP/UDP)이 무엇이든 동일한 전달 모델</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="주의할 점">
+    <ul>
+      <li><strong>Best-effort</strong>: 손실·순서·중복을 자체로 보장하지 않음 (그래서 TCP가 필요)</li>
+      <li>IPv4 주소 고갈 → NAT/PAT, IPv6 도입의 배경</li>
+      <li>출발지 IP를 위조하기 쉬움 → IP 스푸핑, 반사 공격</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>버전</Eyebrow>
+
+## IPv4 vs IPv6
+
+<DataTable>
+  <thead><tr><th></th><th>IPv4</th><th>IPv6</th></tr></thead>
+  <tbody>
+    <tr><td>주소 길이</td><td>32 bit (~43억)</td><td>128 bit (사실상 무한)</td></tr>
+    <tr><td>주소 형태</td><td>192.0.2.1</td><td>2001:db8::1</td></tr>
+    <tr><td>주소 자동설정</td><td>DHCP 필요</td><td>SLAAC로 자동</td></tr>
+    <tr><td>헤더</td><td>가변, 옵션 많음</td><td>고정 길이로 단순화 (라우팅 빠름)</td></tr>
+    <tr><td>NAT</td><td>거의 필수</td><td>원칙적으로 불필요 (보안 모델은 다름)</td></tr>
+    <tr><td>보안</td><td>IPsec 선택</td><td>IPsec 기본 권고 (실무 적용은 별도)</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>NAT</Eyebrow>
+
+## NAT: 사설 IP를 공용 IP로 가리기
+
+<Callout>
+  <strong>NAT 뒤에서 외부 접근 받기</strong>는 본 페이지의 *연결 관점*과 다른 별개 운영 문제: reverse tunnel·STUN/TURN/ICE·bastion·ZTNA. 자세히는 <a href="/docs/advanced/nat-traversal">NAT Traversal</a> 페이지.
+</Callout>
+
+
+가정용 공유기는 한 개의 공인 IP 뒤에 사설 IP(`192.168.x.x`) 여러 대를 숨깁니다.
+나갈 때 출발지 IP·포트를 공인 IP·새 포트로 바꾸고, 돌아오는 응답을 다시 사설 IP로 되돌리는 게 NAT(PAT)입니다.
+
+<Callout>
+  NAT는 IPv4 부족을 임시방편으로 해결했지만 부작용도 있습니다:
+  외부에서 사설 IP로 직접 연결을 시작하기 어렵고(서버·P2P 곤란),
+  애플리케이션이 자기 주소를 알아야 하는 프로토콜(SIP 등)은 별도 우회가 필요합니다.
+</Callout>
+
+<Eyebrow>ICMP</Eyebrow>
+
+## 네트워크의 "안내·에러" 채널
+
+`ping`은 ICMP Echo Request/Reply,
+`traceroute`는 TTL을 1, 2, 3…로 올려가며 받는 ICMP TTL Exceeded로 경로를 그립니다.
+편리하지만 ICMP는 종종 남용되어 (Smurf 공격, 정보 수집) 일부 환경은 차단해 두기도 합니다.
+
+<Eyebrow>시니어 디테일</Eyebrow>
+
+## 라우터의 마음: Longest Prefix Match
+
+라우팅 테이블에 여러 경로가 후보일 때, **가장 긴(=가장 구체적인) prefix가 이긴다**가 LPM 규칙입니다.
+
+```
+10.0.0.0/8    via R1
+10.1.0.0/16   via R2
+10.1.2.0/24   via R3
+0.0.0.0/0     via Rdefault   ← 기본 경로
+```
+
+목적지 <code>10.1.2.42</code> → /24가 가장 구체적이므로 R3. 목적지 <code>10.1.5.1</code> → /16 매치 → R2. 목적지 <code>8.8.8.8</code> → 어디에도 안 맞아 기본 경로(/0) → Rdefault.
+
+<Callout>
+  하드웨어 라우터는 TCAM(Ternary CAM)으로 LPM을 한 클록에 처리.
+  Linux 커널은 FIB의 trie 구조. 둘 다 결과는 같음: 가장 긴 매치.
+</Callout>
+
+## MTU와 Path MTU Discovery
+
+링크마다 한 번에 보낼 수 있는 최대 크기가 있습니다. 이더넷은 1500바이트, PPPoE는 1492, IPsec/GRE 터널은 더 작음.
+
+송신자가 1500바이트를 보냈는데 중간 링크가 1400밖에 못 받으면? 옛날엔 라우터가 패킷을 쪼개서 (IPv4 fragmentation) 보냈지만 성능·보안 이슈로 **DF(Don't Fragment) 비트**를 켜고 ICMP **"Fragmentation Needed"** 응답을 통해 송신자에게 알려주는 게 표준 (PMTUD).
+
+<Callout tone="bad">
+  <strong>"블랙홀"</strong>: 중간 방화벽이 ICMP를 죽이면 PMTUD 응답이 안 옴.
+  TCP 핸드셰이크는 작은 패킷이라 성공하지만 실제 데이터 전송에서 멈춤: 디버깅 악몽.
+  해법: <strong>MSS clamping</strong>: 라우터·LB가 SYN의 MSS 옵션을 강제로 작게 (예: 1380) 만들어 처음부터 작게 보내게 함.
+</Callout>
+
+## NAT 통과: STUN, TURN, ICE
+
+두 호스트가 모두 NAT 뒤에 있으면 직접 연결 시도가 둘 다 막힙니다. 풀려면:
+
+<KV>
+  <KVItem term="STUN (Session Traversal Utilities for NAT)">
+    호스트가 인터넷의 STUN 서버에 물어서 "내 공인 IP·포트는 뭐?"를 알아냄.
+    그 정보를 시그널링 채널로 상대에게 전달. 둘이 동시에 외부로 패킷을 쏘면 NAT가 양쪽 매핑을 유지(hole punch).
+  </KVItem>
+  <KVItem term="TURN (Traversal Using Relays around NAT)">
+    NAT 종류에 따라(symmetric NAT) hole punching 실패. 그땐 중계 서버를 통해 우회. 비용·지연 ↑.
+  </KVItem>
+  <KVItem term="ICE (Interactive Connectivity Establishment)">
+    위 둘 + 직접 연결 후보를 모두 모아 동시 시도, 먼저 성공한 경로 채택. WebRTC가 사용.
+  </KVItem>
+</KV>
+
+### NAT 분류 (구식 RFC 3489 vs 현행 RFC 4787)
+
+<Callout tone="bad">
+  <strong>RFC 3489 4분류(Full/Restricted/Port-Restricted/Symmetric Cone)는 2008년 deprecated.</strong>
+  현행은 <strong>RFC 4787 behavior 분류</strong>: 
+  <ul>
+    <li><strong>Mapping behavior</strong>: Endpoint-Independent / Address-Dependent / Address-and-Port-Dependent</li>
+    <li><strong>Filtering behavior</strong>: 위 셋과 독립적으로 또 나뉨</li>
+  </ul>
+  RFC 3489 용어가 STUN 문서·블로그에 아직 많이 남아 있어 둘 다 알아둘 것. 운영 핵심은 변함없음: Endpoint-Independent Mapping이면 hole punching 가능, Address-and-Port-Dependent (구 Symmetric)면 불가.
+</Callout>
+
+기억용 구식 4분류:
+- **Full Cone** (현행: Endpoint-Independent Mapping + Filtering)
+- **Restricted Cone** (현행: Endpoint-Independent Mapping + Address-Dependent Filtering)
+- **Port Restricted** (현행: Endpoint-Independent Mapping + Address-and-Port-Dependent Filtering)
+- **Symmetric** (현행: Address-and-Port-Dependent Mapping) → **hole punching 불가**, TURN 필요
+
+## ECMP: 같은 비용, 여러 길
+
+목적지로 가는 비용이 같은 경로가 여러 개면 **ECMP(Equal-Cost Multipath)** 로 분산합니다. 라우터는 5-tuple(src/dst IP, src/dst port, proto)을 해시해 결정: **같은 연결의 패킷은 항상 같은 경로**로.
+
+<Callout tone="bad">
+  <strong>ECMP 함정 1: 경로 변화 시 해시 깨짐</strong>. 경로가 추가/제거되면 해시 결과가 바뀌면서 진행 중인 연결의 패킷이 다른 경로로 가버림 → 순서 뒤집힘 또는 stateful 미들박스가 끊음. 해법: <strong>resilient hashing</strong>(consistent hash 변형)으로 변동 시에도 대부분 흐름이 같은 경로 유지.
+</Callout>
+
+<Callout tone="bad">
+  <strong>ECMP 함정 2: 캡슐화에서 polarization</strong>. VXLAN/IPsec/GRE 같이 외부 헤더가 같은 5-tuple로 보이는 캡슐화에서는 내부 5-tuple이 가려져 ECMP가 한 경로로 쏠림(엔트로피 손실). 해법: <strong>entropy label (RFC 6790, MPLS)</strong> 또는 outer UDP src port에 inner 5-tuple 해시를 박아 인위적 엔트로피 주입 (VXLAN의 UDP src port가 정확히 이 용도). 운영자가 잘 모르면 멀티패스가 무용지물.
+</Callout>
+
+## IPv6 NDP: ARP의 후계자
+
+IPv6에는 ARP가 없습니다. **NDP (Neighbor Discovery Protocol)** 가 ICMPv6로 같은 역할 + α를 수행:
+
+<KV>
+  <KVItem term="NS (Neighbor Solicitation)">ARP request 대응. "이 IPv6 주소의 MAC?"</KVItem>
+  <KVItem term="NA (Neighbor Advertisement)">ARP reply 대응. 자기 MAC 응답.</KVItem>
+  <KVItem term="RS / RA (Router Solicitation/Advertisement)">라우터가 자신의 존재와 prefix를 광고. 호스트는 RA를 받아 주소 자동 설정.</KVItem>
+  <KVItem term="SLAAC (Stateless Address Autoconfiguration)">호스트가 RA의 prefix + 자기 인터페이스 ID로 IPv6 주소 자동 생성. DHCP 없이 IP 받음.</KVItem>
+  <KVItem term="DAD (Duplicate Address Detection)">새 주소 사용 전에 같은 주소 있는지 확인.</KVItem>
+</KV>
+
+NDP도 인증이 없어 **NDP 스푸핑**이 가능. 방어: 실무 표준은 **RA Guard / DHCPv6 Guard / ND Inspection** 같은 *IPv6 First-Hop Security* 묶음 (스위치 단). SEND(Secure ND, RFC 3971)는 CGA 부담으로 거의 미배포: 이론서에선 자주 나오지만 실제는 안 씀.
+
+## 라우팅 테이블 들여다보기
+
+```bash
+# Linux
+ip route                     # 메인 테이블
+ip route get 8.8.8.8         # 특정 목적지의 결정 경로
+ip rule                      # 정책 라우팅 룰
+
+# 다중 테이블 (정책 라우팅)
+ip rule add from 10.0.1.0/24 table 100
+ip route add default via 192.168.1.254 table 100
+
+# IPv6 NDP 캐시
+ip -6 neigh
+```
+
+<Callout>
+  <strong>Policy routing</strong>의 흔한 사용: 두 ISP에 멀티홈한 서버에서
+  "이 출발지 IP는 이쪽 ISP로" 같은 규칙. <code>ip rule</code>이 그 손잡이.
+</Callout>

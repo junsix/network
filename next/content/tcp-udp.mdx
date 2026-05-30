@@ -1,0 +1,235 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { DataTable } from "@/components/ui/DataTable";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "04 · Transport (L4)",
+  title: "전송 계층",
+  subtitle: (
+    <>
+      <Accent>정확성과 속도</Accent> 사이의 두 갈래
+    </>
+  ),
+  lead: (
+    <>
+      IP는 "보내 본다"까지만 책임집니다. 그 위에서 누가 받아야 하는지(포트), 잃어버린 건 어떻게 할지,
+      너무 많이 보낼 때는 어떻게 줄일지를 정하는 게 전송 계층입니다.
+      TCP는 정확성을, UDP는 단순함과 저지연을 택합니다.
+    </>
+  ),
+};
+
+<Eyebrow>TCP</Eyebrow>
+
+<h2 id="tcp">연결 지향 · 신뢰성 · 순서 보장</h2>
+
+TCP는 통신 전에 양 끝점이 서로의 상태를 일치시키는 **3-way handshake**를 거칩니다.
+이후 보내는 각 바이트에 시퀀스 번호가 붙고, 받는 쪽은 ACK으로 "여기까지 잘 받았다"고 알립니다.
+손실되거나 순서가 뒤집히면 재전송·재배치를 통해 위 계층에는 깨끗한 바이트 스트림으로 올려줍니다.
+
+<Lane
+  nodes={[
+    { label: "Client" },
+    { label: "Server :443" },
+  ]}
+  runLabel="▶ 3-way Handshake + 데이터"
+  steps={[
+    { say: "연결 수립 시작" },
+    { say: "Client → Server: SYN, seq=x" },
+    { fly: { label: "SYN seq=x", cls: "syn", duration: 1000 } },
+    { say: "Server → Client: SYN+ACK, seq=y, ack=x+1" },
+    { fly: { label: "SYN+ACK seq=y ack=x+1", cls: "syn", duration: 1000, from: "right" } },
+    { say: "Client → Server: ACK, ack=y+1: 연결 수립 완료" },
+    { fly: { label: "ACK ack=y+1", cls: "ack", duration: 900 } },
+    { say: "데이터 송신: 'GET /' (시퀀스 번호 부여)" },
+    { fly: { label: "DATA  'GET /'", cls: "data", duration: 1100 } },
+    { say: "응답 + ACK" },
+    { fly: { label: "DATA + ACK  'HTTP/1.1 200'", cls: "data", duration: 1100, from: "right" } },
+    { say: "종료: FIN, ACK, FIN, ACK (4-way)" },
+    { fly: { label: "FIN", cls: "fin", duration: 800 } },
+    { fly: { label: "ACK + FIN", cls: "fin", duration: 800, from: "right" } },
+    { fly: { label: "ACK", cls: "ack", duration: 700 } },
+    { say: "완료. 총 RTT 비용: 데이터 외 1.5 RTT 추가 (핸드셰이크) + 종료 비용" },
+  ]}
+/>
+
+### 핵심 메커니즘
+
+- **3-way handshake**: SYN → SYN+ACK → ACK. 양쪽이 서로의 ISN(초기 시퀀스 번호)을 교환.
+- **흐름 제어**: 수신 윈도우(rwnd)로 "지금 이만큼만 받을 수 있다"를 알려 송신자를 조절.
+- **혼잡 제어**: 네트워크 상태를 추정해 송신량을 늘렸다(slow start) 줄였다(congestion avoidance).
+- **재전송**: 타이머 만료 또는 중복 ACK 감지 시 재전송 (Fast Retransmit).
+- **4-way FIN**: 종료도 양쪽이 각각 종료 신호를 보낸다 (half-close 가능).
+
+<PCBox>
+  <PC tone="good" title="TCP가 적합한 곳">
+    <ul>
+      <li>파일 전송, 웹 페이지, 이메일, DB 트랜잭션: 한 바이트도 잃으면 안 되는 경우</li>
+      <li>긴 시간 양방향 스트림 (SSH, 메시징)</li>
+      <li>상위 앱이 신뢰성 코드를 직접 안 짜고 싶을 때 (대부분)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="TCP가 불리한 곳">
+    <ul>
+      <li>연결 수립의 RTT 비용이 큰 짧은 트랜잭션 (DNS 단발 질의)</li>
+      <li>지연이 손실보다 더 치명적인 실시간 (게임, 음성)</li>
+      <li>한 스트림 손실이 다른 스트림까지 막는 "Head-of-Line 블로킹"</li>
+      <li><strong>보안</strong>: SYN flood: 수많은 SYN으로 서버 half-open 큐를 채워 정상 사용자 거부</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>UDP</Eyebrow>
+
+<h2 id="udp">비연결 · 데이터그램</h2>
+
+UDP는 헤더가 8바이트밖에 안 됩니다. 출발지 포트, 도착지 포트, 길이, 체크섬. 그게 전부입니다.
+핸드셰이크도, 재전송도, 순서 정렬도 없습니다.
+"보내고 잊는다(fire-and-forget)"는 단순함 덕에 빠르지만, 그 모든 보장은 앱이 직접 만들어야 합니다.
+
+<Lane
+  nodes={[{ label: "Client" }, { label: "Server :53" }]}
+  runLabel="▶ UDP 데이터그램 전송"
+  steps={[
+    { say: "Client → Server: 단일 데이터그램 송신 (사전 협상 없음)" },
+    { fly: { label: "DNS query  example.com", cls: "dns", duration: 900 } },
+    { say: "Server → Client: 단일 응답" },
+    { fly: { label: "DNS response  93.184.216.34", cls: "dns", duration: 900, from: "right" } },
+    { say: "완료. 총 1 RTT, 헤더 8 byte. 손실 시 앱이 재시도 책임." },
+  ]}
+/>
+
+<PCBox>
+  <PC tone="good" title="UDP가 적합한 곳">
+    <ul>
+      <li>DNS 질의: 1패킷 요청 → 1패킷 응답, 핸드셰이크가 부담</li>
+      <li>VoIP·게임·실시간 영상: 약간의 손실이 큰 지연보다 낫다</li>
+      <li>QUIC(HTTP/3): UDP 위에 신뢰성·암호화를 새로 설계해서 얹음</li>
+      <li>대량 텔레메트리·로그 (statsd 등): 일부 손실 허용</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="UDP가 불리한 곳">
+    <ul>
+      <li>장기 양방향 정확한 데이터 전송 (TCP가 만들어 둔 모든 것을 다시 짜야 함)</li>
+      <li>NAT/방화벽 통과: 상태가 없으므로 일부 NAT가 빨리 닫아버림</li>
+      <li><strong>보안</strong>: 반사·증폭 공격(DNS·NTP·memcached): 작은 요청에 큰 응답</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>비교</Eyebrow>
+
+## 한눈에 보기
+
+<DataTable>
+  <thead><tr><th></th><th>TCP</th><th>UDP</th></tr></thead>
+  <tbody>
+    <tr><td>연결</td><td>3-way handshake</td><td>없음</td></tr>
+    <tr><td>신뢰성</td><td>ACK + 재전송</td><td>없음 (앱이 필요시 직접)</td></tr>
+    <tr><td>순서</td><td>보장</td><td>보장 안 함</td></tr>
+    <tr><td>흐름·혼잡 제어</td><td>있음</td><td>없음</td></tr>
+    <tr><td>헤더</td><td>20 byte~</td><td>8 byte</td></tr>
+    <tr><td>지연</td><td>RTT × 1.5 (연결) + α</td><td>거의 0</td></tr>
+    <tr><td>전형적 사용</td><td>HTTP, SSH, DB</td><td>DNS, VoIP, 게임, QUIC</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>진화</Eyebrow>
+
+## QUIC: TCP의 좋은 점만, UDP 위에서
+
+HTTP/3가 사용하는 QUIC은 UDP 위에서 동작하지만 신뢰성·순서·혼잡 제어·암호화(TLS 1.3 통합)를 모두 갖춥니다.
+TCP의 굳어진 한계(예: HoL 블로킹, 연결 마이그레이션 불가, 미들박스 고착)를 우회하기 위한 설계입니다.
+
+<Callout tone="good">
+  QUIC은 "왜 굳이 UDP를 골랐을까?"라는 질문의 좋은 답입니다.
+  TCP에 새 기능을 추가하면 전 세계 미들박스가 거부하는 경우가 많아, OS 커널 밖에서
+  진화 가능한 새 전송을 UDP 위에 얹은 것이죠.
+</Callout>
+
+<Eyebrow>시니어 디테일</Eyebrow>
+
+## 면접관이 파고드는 곳
+
+### TIME_WAIT: 왜 2 MSL을 기다리는가
+
+연결을 종료할 때 마지막 ACK를 보낸 쪽은 **2 × MSL(Maximum Segment Lifetime)** 동안
+소켓을 잡고 있습니다. RFC상 MSL은 보통 2분(= 2MSL 240초)이지만,
+**Linux는 `TCP_TIMEWAIT_LEN`을 60초로 하드코딩**합니다 (커널 상수, RFC 계산이 아님). 두 가지 이유:
+
+- 마지막 ACK가 손실되어 상대가 FIN을 재전송하면, 그 FIN이 우리에게 도착해 응답할 수 있게.
+- 같은 4-tuple의 이전 연결 패킷이 네트워크에 떠다니다 새 연결에 섞이는 걸 방지.
+
+<Callout tone="bad">
+  <strong>운영 함정</strong>: 짧은 연결을 초당 수천 개 맺는 시스템(예: 헬스체크·proxy)에서
+  TIME_WAIT 소켓이 폭증해 포트 고갈. 해법:
+  <code>SO_REUSEADDR</code>/<code>SO_REUSEPORT</code>, 연결 재사용(keep-alive),
+  소스 포트 풀 확장(<code>net.ipv4.ip_local_port_range</code>),
+  서버 측에서는 <code>tcp_tw_reuse</code>(Linux). <code>tcp_tw_recycle</code>은 NAT에서 위험해 5.x에서 제거됨.
+</Callout>
+
+### Nagle + Delayed ACK 데드락
+
+- **Nagle 알고리즘**: 작은 패킷을 합쳐 보냄: "ACK 받기 전까지 작은 데이터를 모은다".
+- **Delayed ACK**: 받자마자 ACK 안 보내고 잠시 기다림: 곧 보낼 응답에 piggyback할 수 있게. **Linux 기본 ~40ms (`TCP_DELACK_MAX`)**, Windows 기본 200ms.
+
+둘이 만나면 송신 측이 ACK를 기다리고, 수신 측은 응답을 기다리고 → **플랫폼에 따라 40ms (Linux) ~ 200ms (Windows) 멈춤**. 대화형 프로토콜에서 이 정체가 자주 나타납니다.
+
+<Callout>
+  해법: 대화형/저지연 트래픽은 <code>TCP_NODELAY</code>(Nagle off) + 가능하면 <code>TCP_QUICKACK</code>.
+  Redis·gRPC·SSH 등은 기본적으로 NODELAY를 켭니다.
+</Callout>
+
+### 재전송 타이머: RTO
+
+손실 감지는 두 가지: **타이머 만료(RTO)** 또는 **중복 ACK 3개(Fast Retransmit)**.
+
+RTO는 **Jacobson/Karels 알고리즘**으로 RTT의 이동평균과 변동성을 추정해 계산합니다:
+
+```
+SRTT  = (1 - α) × SRTT  + α × RTT_sample   (α = 1/8)
+RTTVAR= (1 - β) × RTTVAR + β × |SRTT - RTT_sample|   (β = 1/4)
+RTO   = SRTT + 4 × RTTVAR  (하한 보통 200ms)
+```
+
+손실이 연속되면 **지수 백오프**: 200ms → 400ms → 800ms … 최대 60s. 첫 SYN이 떨어지면 Linux 기본 초기 RTO 1초, 이후 **1·3·7·15·31초** 식으로 누적 (`tcp_syn_retries=6` 기본 → 총 ~127초 만에 포기). 사용자가 체감하는 "응답 안 옴"의 정체.
+
+### Keepalive: 가만히 있는 연결을 어떻게 감지하나
+
+TCP는 데이터가 없으면 이론상 영원히 연결 유지. 그래서 양쪽 중 한쪽이 사라져도 다른 쪽은 모름.
+**SO_KEEPALIVE** 옵션을 켜면 일정 시간(<code>tcp_keepalive_time</code>, 기본 2시간) 후 빈 ACK를 보내 응답 확인.
+실패하면 끊김으로 처리.
+
+<Callout>
+  기본 2시간은 너무 길다. NAT/방화벽이 보통 5~30분 idle 시 세션을 끊으므로
+  애플리케이션 레이어(HTTP/2 PING, WebSocket ping)에서 30~60초 주기로 keepalive를 보내는 게 일반적.
+</Callout>
+
+### 상태 전이를 외워두면
+
+```
+CLOSED → LISTEN → SYN_RECV → ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED   (수동 종료)
+CLOSED → SYN_SENT → ESTABLISHED → FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT → CLOSED  (능동 종료)
+```
+
+`netstat -an | awk '/^tcp/ {print $6}' | sort | uniq -c` 로 분포 볼 수 있음.
+**CLOSE_WAIT가 많다 = 애플리케이션이 close()를 안 부른다** (자주 묻는 운영 문제).
+
+### UDP 운영의 함정
+
+- **MTU 초과 시 IP fragmentation**: 한 조각만 잃어도 전체 패킷 손실. DNS 응답이 클 때(DNSSEC) 자주 발생.
+- **체크섬은 의무 (IPv6) / 선택 (IPv4)**: IPv6 UDP는 체크섬 0 불허.
+- **SO_REUSEPORT**: 여러 워커가 같은 UDP 포트 listen → 커널이 흐름 단위로 분산. QUIC 서버의 기본 패턴.
+
+<Callout>
+  <strong>L1·기초 완료 다음 단계</strong>. 이 페이지로 L1(layers·arp·ip-routing·tcp-udp) 4페이지를 모두 보셨다면, L2·실무로 진입할 차례입니다. 다음 추천 경로:
+  <ul>
+    <li><a href="/docs/dns">DNS</a>: 이름이 어떻게 IP로 변환되는지 (L4 위에 처음 얹히는 응용)</li>
+    <li><a href="/docs/http">HTTP</a>: 그 IP로 어떻게 의미 있는 요청을 보내는지</li>
+    <li><a href="/docs/tls">TLS</a>: HTTP가 어떻게 안전한 HTTPS가 되는지</li>
+    <li><a href="/docs/walkthrough">주소창 → 화면</a>: 위 셋이 한 요청에서 어떻게 함께 작동하는지의 시니어 통합</li>
+  </ul>
+</Callout>

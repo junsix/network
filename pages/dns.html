@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DNS · net·viz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="../index.html">net·viz</a></div>
+      <nav>
+        <a href="../index.html">홈</a>
+        <a href="layers.html">계층</a>
+        <a href="arp.html">ARP</a>
+        <a href="ip-routing.html">IP·라우팅</a>
+        <a href="tcp-udp.html">TCP·UDP</a>
+        <a href="dns.html">DNS</a>
+        <a href="http.html">HTTP</a>
+        <a href="tls.html">TLS</a>
+        <a href="security.html">보안</a>
+        <a href="advanced/bgp.html">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> 06 · Application</span>
+      <h1>DNS — 사람이 외울 수 있는 이름을 <span class="accent">기계의 주소로</span></h1>
+      <p class="lead">
+        브라우저에 <code class="inline">example.com</code>을 입력하면 가장 먼저 일어나는 일이 DNS 조회입니다.
+        DNS는 전 세계에 분산된 거대한 분산 키-값 저장소이며, 캐시와 위임으로 빠르고 확장 가능하지만,
+        그만큼 캐시 신뢰가 망가지면 인터넷 전체가 잘못된 곳을 가리킬 수도 있습니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">트리</span>
+      <h2>이름 공간의 구조</h2>
+      <p>
+        DNS 이름은 오른쪽에서 왼쪽으로 읽습니다. <code class="inline">www.example.com.</code>의 맨 뒤 점은 루트입니다.
+      </p>
+      <div class="diagram" style="margin-top:14px;">
+        <svg viewBox="0 0 900 220" role="img" aria-label="DNS 트리">
+          <g font-size="13" font-family="JetBrains Mono">
+            <circle cx="450" cy="40" r="22" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.6"/>
+            <text x="450" y="46" text-anchor="middle" fill="#EDEDEF">.</text>
+            <text x="450" y="80" text-anchor="middle" fill="#8A8F98" font-size="11">root</text>
+
+            <line x1="450" y1="62" x2="220" y2="122" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <line x1="450" y1="62" x2="450" y2="122" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <line x1="450" y1="62" x2="680" y2="122" stroke="#5E6AD2" stroke-opacity="0.5"/>
+
+            <rect x="180" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="220" y="142" text-anchor="middle" fill="#EDEDEF">com</text>
+            <rect x="410" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="450" y="142" text-anchor="middle" fill="#EDEDEF">org</text>
+            <rect x="640" y="122" width="80" height="30" rx="6" fill="#0f0f12" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="680" y="142" text-anchor="middle" fill="#EDEDEF">kr</text>
+
+            <line x1="220" y1="152" x2="220" y2="182" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <rect x="160" y="182" width="120" height="30" rx="6" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.6"/>
+            <text x="220" y="202" text-anchor="middle" fill="#EDEDEF">example.com</text>
+
+            <text x="20" y="208" fill="#8A8F98" font-size="12" font-family="Inter">위임: 각 노드는 "아래는 누구에게 물어봐"의 정보만 알면 된다.</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">애니메이션</span>
+      <h2>재귀 vs 반복 질의</h2>
+      <p>
+        브라우저가 직접 루트부터 일일이 묻지 않습니다. 보통 ISP/사설망의 <strong>리졸버(recursive resolver)</strong>에게
+        "어떻게든 알아내 와"라고 한 번만 묻습니다. 리졸버는 그 뒤에서 권한 서버들을 차례로 두드립니다.
+      </p>
+
+      <div class="controls">
+        <button class="btn primary" id="dnsRun">▶ DNS 조회 시작</button>
+        <button class="btn" id="dnsReset">↺ 초기화</button>
+      </div>
+
+      <div class="diagram" style="padding:18px;">
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11.5px;color:var(--fg-muted);text-align:center;margin-bottom:10px;font-family:var(--font-mono);">
+          <div>Browser</div><div>Recursive<br/>Resolver</div><div>Root .</div><div>TLD .com</div><div>Authoritative<br/>example.com</div>
+        </div>
+        <div class="lane" id="dnsLane">
+          <div class="nodes">
+            <div class="node">BR</div><div class="node">RS</div><div class="node">.</div><div class="node">.com</div><div class="node">auth</div>
+          </div>
+        </div>
+        <div id="dnsLog" style="margin-top:12px;color:var(--fg-muted);font-size:13px;min-height:140px;font-family:var(--font-mono);"></div>
+      </div>
+
+      <ol class="steps">
+        <li>브라우저 → 리졸버: "<code class="inline">www.example.com</code>의 A 레코드?"</li>
+        <li>리졸버 → 루트: ".com TLD 서버는 어디?" (캐시 없을 때만)</li>
+        <li>리졸버 → .com TLD: "example.com의 권한 서버는?"</li>
+        <li>리졸버 → example.com 권한 서버: "www의 A?"</li>
+        <li>받은 IP를 캐시(TTL 동안)한 뒤 브라우저로 응답</li>
+      </ol>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">레코드</span>
+      <h2>주요 레코드 타입</h2>
+      <table>
+        <thead><tr><th>타입</th><th>의미</th><th>예시</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>이름 → IPv4</td><td>example.com → 93.184.216.34</td></tr>
+          <tr><td>AAAA</td><td>이름 → IPv6</td><td>example.com → 2606:2800:220:1::</td></tr>
+          <tr><td>CNAME</td><td>이름 → 다른 이름 (별칭)</td><td>www → example.com</td></tr>
+          <tr><td>MX</td><td>메일 서버</td><td>10 mail.example.com</td></tr>
+          <tr><td>NS</td><td>권한 네임 서버</td><td>ns1.example.com</td></tr>
+          <tr><td>TXT</td><td>임의 텍스트 (SPF, DKIM, 도메인 검증)</td><td>"v=spf1 ..."</td></tr>
+          <tr><td>SRV</td><td>서비스 위치 + 포트</td><td>_sip._tcp ...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">트레이드오프</span>
+      <h2>강점과 약점</h2>
+      <div class="pcbox">
+        <div class="pc good">
+          <h4>왜 잘 동작하나</h4>
+          <ul>
+            <li>위임으로 운영 책임 분산 (각자 자기 도메인만 관리)</li>
+            <li>캐시(TTL) 덕에 대부분의 조회는 1 RTT 내 종료</li>
+            <li>UDP 한 번으로 충분히 짧고 빠름</li>
+            <li>이름→IP 매핑이 분리돼 있어 서비스 이전·확장이 자유로움</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <h4>약점</h4>
+          <ul>
+            <li>응답이 평문 — 누가 어떤 사이트에 접속하는지 감청 가능</li>
+            <li>응답을 신뢰할 수밖에 없음 → 캐시 포이즈닝, 스푸핑 위험</li>
+            <li>UDP 기반이라 출발지 위조에 의한 반사·증폭 공격 도구로 악용</li>
+            <li>TTL이 너무 길면 장애 시 회복이 느림, 너무 짧으면 트래픽 ↑</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">진화</span>
+      <h2>DNSSEC · DoT · DoH</h2>
+      <table>
+        <thead><tr><th>기술</th><th>해결하는 문제</th><th>방식</th></tr></thead>
+        <tbody>
+          <tr><td>DNSSEC</td><td>응답 위변조</td><td>레코드에 디지털 서명, 신뢰 사슬 검증</td></tr>
+          <tr><td>DoT (DNS over TLS)</td><td>도청</td><td>853/TCP 위에서 TLS로 암호화</td></tr>
+          <tr><td>DoH (DNS over HTTPS)</td><td>도청 + 차단 회피</td><td>HTTPS(443) 요청으로 위장, 일반 웹 트래픽과 구분 어려움</td></tr>
+          <tr><td>ODoH</td><td>리졸버에 의한 사용자 추적</td><td>중계자가 사용자 신원과 질의를 분리</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        DNSSEC은 "응답의 진위"를 보장하지만, "도청 여부"는 보장하지 않습니다.
+        DoT/DoH는 그 반대로 "암호화"는 하지만 "응답이 진짜인지"는 보장하지 않습니다.
+        둘은 서로 보완 관계입니다.
+      </div>
+    </section>
+
+    <p class="foot">다음으로 추천: <a href="http.html">HTTP — 웹의 언어 →</a></p>
+  </main>
+
+  <script src="../js/common.js"></script>
+  <script>
+    const lane = document.getElementById("dnsLane");
+    const log = document.getElementById("dnsLog");
+    const append = (m) => { const d = document.createElement("div"); d.textContent = "› " + m; log.appendChild(d); };
+    document.getElementById("dnsReset").onclick = () => { log.innerHTML = ""; lane.querySelectorAll(".pkt").forEach(p => p.remove()); };
+    document.getElementById("dnsRun").onclick = async () => {
+      log.innerHTML = "";
+      append("브라우저: 캐시(stub resolver) 미스 → OS 리졸버 → 외부 리졸버로 위임");
+      await NetViz.flyPacket(lane, { label: "Q: www.example.com A?", cls: "dns", duration: 900 });
+      append("리졸버: 루트의 hint는 내장. .com TLD 위치 확인");
+      await NetViz.flyPacket(lane, { label: "Q: .com NS?", cls: "dns", duration: 1100 });
+      await NetViz.flyPacket(lane, { label: "A: gtld-servers", cls: "dns", duration: 1100, from: "right" });
+      append("리졸버 → .com TLD: example.com의 권한 서버는?");
+      await NetViz.flyPacket(lane, { label: "Q: example.com NS?", cls: "dns", duration: 1100 });
+      await NetViz.flyPacket(lane, { label: "A: ns1.example.com", cls: "dns", duration: 1100, from: "right" });
+      append("리졸버 → 권한 서버: www의 A?");
+      await NetViz.flyPacket(lane, { label: "Q: www A?", cls: "dns", duration: 1100 });
+      await NetViz.flyPacket(lane, { label: "A: 93.184.216.34 TTL=3600", cls: "dns", duration: 1100, from: "right" });
+      append("리졸버는 결과를 TTL(3600s) 동안 캐시. 브라우저로 응답 반환.");
+      await NetViz.flyPacket(lane, { label: "→ Browser: 93.184.216.34", cls: "ack", duration: 900, from: "right" });
+      append("이후 같은 이름 조회는 캐시에서 즉시 응답 (수 ms).");
+    };
+  </script>
+</body>
+</html>

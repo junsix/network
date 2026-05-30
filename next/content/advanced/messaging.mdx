@@ -1,0 +1,363 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "16 · Async Messaging",
+  title: "메시지 큐",
+  subtitle: (
+    <>
+      <Accent>비동기 통신</Accent>의 신뢰성
+    </>
+  ),
+  lead: (
+    <>
+      동기 RPC가 풀 수 없는 세 가지 : <strong>fan-out</strong>(한 이벤트를 N 소비자에게),
+      <strong> backpressure</strong>(소비자보다 빠른 생산자),
+      <strong> 결합도 해체</strong>(생산자가 누가 듣는지 모름).
+      Kafka·NATS·Redis Streams·SQS·RabbitMQ가 같은 문제를 다른 트레이드오프로 풉니다.
+    </>
+  ),
+};
+
+<Eyebrow>경계</Eyebrow>
+
+## 동기 RPC vs 비동기 메시지
+
+같은 호출도 *언제 응답이 필요한가*에 따라 다른 도구입니다.
+
+<DataTable>
+  <thead><tr><th></th><th>동기 RPC (HTTP·gRPC)</th><th>비동기 메시지</th></tr></thead>
+  <tbody>
+    <tr><td>응답 시점</td><td>호출 즉시</td><td>나중(소비자 처리 후)</td></tr>
+    <tr><td>실패 모드</td><td>호출자가 timeout·retry</td><td>broker가 보존·재전달</td></tr>
+    <tr><td>결합도</td><td>호출자가 수신자 주소·시그니처 알아야</td><td>topic만 공유, 생산자·소비자 독립 배포</td></tr>
+    <tr><td>fan-out</td><td>1:1</td><td>1:N (topic subscriber)</td></tr>
+    <tr><td>backpressure</td><td>504 또는 429로만</td><td>큐 깊이로 자연스럽게</td></tr>
+    <tr><td>적합한 의미</td><td>"지금 답해 줘"</td><td>"언젠가 처리해 줘"</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  실무 패턴: 사용자 *대기* 요청은 동기 RPC, 그 뒤의 *부수 효과*(이메일 발송·검색 인덱싱·데이터 ETL)는 비동기 메시지. 이 경계가 *지연 예산*과 *신뢰성 보장*을 동시에 푸는 핵심.
+</Callout>
+
+<Eyebrow>Kafka</Eyebrow>
+
+## Partition · Log · Consumer Group
+
+Kafka의 본질은 *분산된 append-only log*입니다.
+
+<KV>
+  <KVItem term="Topic">논리 채널 (예: <code>orders</code>).</KVItem>
+  <KVItem term="Partition">topic의 물리 분할. 각 partition은 *순서 보장 append-only log*. partition 수가 병렬도.</KVItem>
+  <KVItem term="Offset">partition 내 단조 증가 정수. 소비자가 "어디까지 읽었는지" 기록.</KVItem>
+  <KVItem term="Producer key">메시지의 key 해시 → partition 결정. 같은 key는 항상 같은 partition (순서 보장).</KVItem>
+  <KVItem term="Consumer Group">group id 공유 시 각 partition은 *group 내 정확히 1 consumer*가 담당. group이 다르면 fan-out.</KVItem>
+  <KVItem term="ISR (In-Sync Replicas)">leader와 *충분히 가까운* replica 집합 (<code>replica.lag.time.max.ms</code> 안에 따라온 replica). <strong><code>acks=all</code></strong>은 ISR *전원*이 ack해야 commit (과반 아님). 내구성 하한은 <code>min.insync.replicas</code>로 별도 설정: 보통 RF=3에 min.insync.replicas=2가 production default. (과반 quorum 모델은 KRaft *metadata* 합의 쪽이고 데이터 plane의 producer ack 경로와 별개.)</KVItem>
+</KV>
+
+<Diagram>
+  <svg viewBox="0 0 900 220" role="img" aria-label="Kafka partition layout">
+    <g fontFamily="JetBrains Mono" fontSize="12">
+      <text x="20" y="30" fill="#8A8F98">Topic: orders (partitions = 3)</text>
+      <rect x="20" y="50" width="500" height="40" rx="6" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="40" y="74" fill="#EDEDEF">P0: [42][43][44]...[107]</text>
+      <text x="540" y="74" fill="#8A8F98" fontSize="11">leader=broker-1, ISR={`{1,2,3}`}</text>
+      <rect x="20" y="100" width="500" height="40" rx="6" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+      <text x="40" y="124" fill="#EDEDEF">P1: [88][89][90]...[201]</text>
+      <text x="540" y="124" fill="#8A8F98" fontSize="11">leader=broker-2, ISR={`{2,3,1}`}</text>
+      <rect x="20" y="150" width="500" height="40" rx="6" fill="#4a3514" stroke="#F4B942" strokeOpacity="0.5"/>
+      <text x="40" y="174" fill="#EDEDEF">P2: [12][13][14]...[60]</text>
+      <text x="540" y="174" fill="#8A8F98" fontSize="11">leader=broker-3, ISR={`{3,1,2}`}</text>
+    </g>
+  </svg>
+</Diagram>
+
+<Callout>
+  Partition 수는 <strong>늘릴 수만 있고 줄일 수 없다</strong> (topic 재생성 + 이중 쓰기·이관만 가능). 게다가 *증가 시* 같은 key의 hash 분포가 재배치되어 <strong>같은 key의 순서 보장이 깨진다</strong> (한 key의 이벤트가 다른 partition으로 흩어짐). 초기에 너무 많이 잡으면 broker 부담, 너무 적으면 consumer 병렬도 부족. 일반 가이드: <strong>예상 처리량 / single-consumer 처리량 × 2~3</strong>.
+</Callout>
+
+<Eyebrow>Delivery</Eyebrow>
+
+## 세 가지 보장 수준
+
+<DataTable>
+  <thead><tr><th>보장</th><th>의미</th><th>구현</th></tr></thead>
+  <tbody>
+    <tr><td>At-most-once</td><td>0 또는 1번</td><td>producer fire-and-forget · 단순·로그 손실 가능</td></tr>
+    <tr><td>At-least-once</td><td>1번 이상 (중복 가능)</td><td>ack 후 commit · 소비자가 <strong>idempotent</strong>해야 안전</td></tr>
+    <tr><td>Exactly-once (EOS)</td><td>정확히 1번</td><td>producer idempotency + transactional write + read-process-write</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>"Exactly-once는 마법이 아니다"</strong>. Kafka EOS는 *Kafka 안에서만* 정확히 1번 (read from Kafka → process → write to Kafka). 외부 sink(DB·외부 API)로 나가는 순간 *idempotency key*가 다시 필요. 실무에선 "at-least-once + idempotency"가 가장 흔한 답.
+</Callout>
+
+<Eyebrow>Idempotency</Eyebrow>
+
+## 중복을 안전하게
+
+소비자가 같은 메시지를 N번 받아도 결과가 같아야 함.
+
+<Steps>
+  <li><strong>Idempotency key</strong>: 메시지마다 고유 ID(uuid·hash)를 부여, 소비자가 "처리됨" 테이블 조회 후 skip</li>
+  <li><strong>Upsert / Conditional write</strong>: DB INSERT ON CONFLICT, DynamoDB <code>attribute_not_exists</code>, Redis SETNX</li>
+  <li><strong>State machine</strong>: 상태 전이가 idempotent하면 자동 (예: "결제 완료" 상태에선 다시 "결제 완료"는 noop)</li>
+  <li><strong>Dedup window</strong>: TTL 있는 set에 ID 저장, 그 안에 같은 ID는 skip</li>
+</Steps>
+
+<Eyebrow>비교</Eyebrow>
+
+## 시스템 매트릭스
+
+<DataTable>
+  <thead><tr><th></th><th>Kafka</th><th>NATS (JetStream)</th><th>Redis Streams</th><th>SQS</th><th>RabbitMQ</th></tr></thead>
+  <tbody>
+    <tr><td>모델</td><td>append log + offset</td><td>subject + stream</td><td>append log + group</td><td>매니지드 큐</td><td>broker + queue + exchange</td></tr>
+    <tr><td>운영</td><td>self-host (복잡)</td><td>self-host (단순)</td><td>Redis 그대로</td><td>AWS 완전관리</td><td>self-host 표준</td></tr>
+    <tr><td>처리량</td><td>수백만 RPS</td><td>수십만 RPS</td><td>10만 RPS급</td><td>지역당 3,000 RPS (FIFO) · 무제한 (standard)</td><td>수만 RPS</td></tr>
+    <tr><td>보존</td><td>시간·크기 무제한 (디스크)</td><td>설정</td><td>설정</td><td>최대 14일</td><td>큐 비울 때까지</td></tr>
+    <tr><td>순서 보장</td><td>partition 단위</td><td>subject 단위</td><td>stream 단위</td><td>FIFO 큐만 (group id)</td><td>queue 단위</td></tr>
+    <tr><td>fan-out</td><td>consumer group 추가</td><td>queue group / fan-out subject</td><td>group 추가</td><td>SNS+SQS 조합</td><td>fanout exchange</td></tr>
+    <tr><td>적합</td><td>대규모 이벤트 스트림</td><td>마이크로서비스 통신</td><td>경량 사이드카</td><td>AWS 통합·spike 흡수</td><td>전통 enterprise</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>Backpressure</Eyebrow>
+
+## 큐 깊이가 신호다
+
+생산자가 소비자보다 빠르면 큐가 쌓입니다. 이걸 *알아채는* 신호와 *대응*하는 정책.
+
+<KV>
+  <KVItem term="Consumer lag">"현재 commit offset · log end offset" 차이. Kafka의 가장 중요한 메트릭.</KVItem>
+  <KVItem term="Queue depth">큐의 메시지 수. SQS <code>ApproximateNumberOfMessages</code>·RabbitMQ <code>messages_ready</code>.</KVItem>
+  <KVItem term="Age of oldest message">큐의 가장 오래된 메시지 나이. 처리 SLA 알람의 일순위.</KVItem>
+</KV>
+
+<PCBox>
+  <PC tone="good" title="대응 1 · Scale consumer">
+    <ul>
+      <li>consumer group에 노드 추가 → partition 재할당</li>
+      <li>K8s HPA로 lag 메트릭 기반 자동 스케일</li>
+      <li>전제: partition 수 ≥ 목표 consumer 수</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="대응 2 · Throttle producer">
+    <ul>
+      <li>upstream rate limit으로 입력 자체 줄이기</li>
+      <li>Kafka quota (per producer client.id) 설정</li>
+      <li>비싼 가시성 작업(트레이스·로그)을 샘플링</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="대응 3 · Drop · DLQ">
+    <ul>
+      <li>가장 오래된 메시지 폐기 (Redis Streams <code>MAXLEN</code>, RabbitMQ x-message-ttl)</li>
+      <li>poison message는 <strong>Dead Letter Queue</strong>로 따로 빼서 사람이 검수</li>
+      <li>전체 흐름이 막히지 않도록</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>Outbox</Eyebrow>
+
+## DB와 메시지의 일관성
+
+DB 트랜잭션 commit과 메시지 발행이 *둘 다* 성공해야 하는 문제(*dual write*). 전형 함정 : DB는 commit됐는데 메시지 발행이 실패 → 영원히 누락.
+
+해법: **Transactional Outbox 패턴**.
+
+<Steps>
+  <li>같은 DB 트랜잭션에서 *비즈니스 변경* + *outbox 테이블에 메시지 row 삽입*</li>
+  <li>별도 publisher 프로세스가 outbox를 *poll*해 broker에 발행 후 row 삭제(또는 published=true 마킹)</li>
+  <li>발행 실패 시 row 그대로 → 재시도. *적어도 한 번* 발행 보장</li>
+  <li>CDC(Change Data Capture · Debezium)가 outbox를 자동으로 Kafka에 전달하면 publisher 따로 불필요</li>
+</Steps>
+
+```sql
+-- 1) 같은 트랜잭션에 비즈니스 변경 + outbox row
+BEGIN;
+UPDATE orders SET status = 'paid' WHERE id = 42;
+INSERT INTO outbox (id, topic, payload, created_at)
+  VALUES (gen_random_uuid(), 'order.paid', '{"order_id":42}', NOW());
+COMMIT;
+
+-- 2) 별도 publisher 프로세스가 주기적으로 poll
+SELECT id, topic, payload FROM outbox
+  WHERE published_at IS NULL
+  ORDER BY created_at
+  FOR UPDATE SKIP LOCKED   -- 동시 publisher N대 시 row 중복 잠금 방지
+  LIMIT 100;
+-- ... Kafka에 발행 후 ...
+UPDATE outbox SET published_at = NOW() WHERE id = ANY($1);
+```
+
+<Callout>
+  Outbox는 *분산 트랜잭션(XA·2PC)*의 실용적 대체. exactly-once가 *Kafka 안*에서만 가능한 한계를 *Kafka 밖*까지 끌고 가는 가장 단순한 방법.
+</Callout>
+
+## Saga: 장기 트랜잭션
+
+여러 서비스가 걸친 트랜잭션(주문 → 결제 → 재고 → 배송)은 *전역 락*이 불가. 대신:
+
+- **Choreography**: 각 서비스가 이벤트 보고 다음 서비스가 처리. 결합도 낮음, 흐름 추적 어려움.
+- **Orchestration**: 중앙 orchestrator(Temporal·AWS Step Functions)가 흐름 지휘. 추적 쉬움, 단일 책임 노드.
+- **보상 트랜잭션**: 실패 시 *이전 단계의 역연산*을 발행 (refund·release stock).
+
+<Eyebrow>Schema</Eyebrow>
+
+## 진화 가능한 메시지
+
+메시지는 *영구 로그*라 schema가 바뀌어도 옛 메시지를 읽을 수 있어야 합니다.
+
+<KV>
+  <KVItem term="Avro · Protobuf · Thrift">필드 번호 기반 진화. 미지 필드 무시·기본값.</KVItem>
+  <KVItem term="Schema Registry">Confluent Schema Registry·AWS Glue Schema Registry. 호환성 규칙 강제(backward·forward·full).</KVItem>
+  <KVItem term="JSON Schema">유연하지만 호환성 규칙 약함. 대규모엔 부적합.</KVItem>
+  <KVItem term="규칙">필드 추가는 OK, 삭제는 deprecate 단계, 타입 변경은 새 필드 + 마이그레이션.</KVItem>
+</KV>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 흔히 만나는 실패 모드
+
+<PCBox>
+  <PC tone="bad" title="Rebalance Storm">
+    <ul>
+      <li>consumer 그룹 멤버 변경 시 *전체* partition 재할당 → 수 초~분 처리 정지</li>
+      <li>Static membership (<code>group.instance.id</code>, KIP-345 / Kafka 2.3+) + cooperative rebalance (KIP-429)로 완화. (<code>client.instance.id</code>는 KIP-714 client telemetry용으로 별개 설정: 이름 비슷한 footgun.)</li>
+      <li>K8s rolling deploy 시 특히 주의</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Poison Message">
+    <ul>
+      <li>특정 메시지가 처리 실패 → 같은 메시지 무한 재시도 → consumer 정지</li>
+      <li>N회 실패 시 DLQ로 이동 + 알람</li>
+      <li>스키마 위반·NULL 필드 자주 원인</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Retention 폭주">
+    <ul>
+      <li>retention 잘못 설정 시 디스크 폭증 (Kafka 기본 7일 → 한 달 변경하면 4배)</li>
+      <li>topic별 retention.ms·retention.bytes 명시</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="순서 가정 깨짐">
+    <ul>
+      <li>key 잘못 선택 시 같은 도메인 이벤트가 여러 partition으로 분산 → 순서 보장 깨짐</li>
+      <li>같은 entity의 이벤트는 *같은 key*로 (user_id·order_id 등)</li>
+      <li>retry 시 producer ordering 보존: 비-idempotent면 <code>max.in.flight.requests.per.connection=1</code> 필요 (throughput 손해). <strong>idempotent producer</strong>(<code>enable.idempotence=true</code>, Kafka 3.0+ default)면 max.in.flight ≤ 5까지 허용하면서 *순서 + 중복 제거 모두 보장* (producer epoch + sequence number 덕분).</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>Durability</Eyebrow>
+
+## Kafka 내구성의 진짜 knob
+
+`acks=all` 하나로는 부족. 운영 default는 *세 가지 값의 조합*:
+
+<DataTable>
+  <thead><tr><th>설정</th><th>의미</th><th>production default</th></tr></thead>
+  <tbody>
+    <tr><td><code>replication.factor</code> (RF)</td><td>partition 복제본 수</td><td>3</td></tr>
+    <tr><td><code>min.insync.replicas</code></td><td>commit에 필요한 최소 ISR 크기</td><td>2 (RF=3에 한 칸 여유)</td></tr>
+    <tr><td><code>acks=all</code></td><td>producer가 ISR 전원 ack 대기</td><td>ON</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  RF=3, ISR=3, min.insync.replicas=2면 broker 1대 죽어도 write 계속. <strong>broker 2대</strong> 죽으면 <code>NotEnoughReplicasException</code>으로 write block (정상 동작). 그러나 min.insync.replicas=1로 잡으면 broker 2대 죽었을 때도 write 통과 → 남은 1대 죽으면 *데이터 손실*. 새벽 3시 인시던트의 50%가 이 값 잘못 잡아 발생. <strong>production은 RF≥3 + min.insync.replicas≥2 강제</strong>.
+</Callout>
+
+<Callout>
+  2026 시점 Kafka 4.x는 ZooKeeper deprecated/removed. broker 운영 가정이 <strong>KRaft</strong>(Raft 변형, KIP-500) 기준: controller quorum 3·5 노드가 metadata를 합의 (자세히는 <a href="/docs/advanced/consensus">분산 합의</a>).
+</Callout>
+
+<Eyebrow>EOS 실체</Eyebrow>
+
+## Exactly-Once Semantics를 진짜 켜는 법
+
+"Kafka 안에서만 정확히 1번"은 *경계*. 그 안에서 켜려면 다음 4가지가 모두 정합해야 합니다.
+
+<KV>
+  <KVItem term="Producer"><code>enable.idempotence=true</code> + <code>transactional.id</code> 설정. transactional.id 기반 zombie producer fencing.</KVItem>
+  <KVItem term="Consumer"><code>isolation.level=read_committed</code>. aborted 메시지는 LSO(Last Stable Offset)까지만 read.</KVItem>
+  <KVItem term="Pattern">read-process-write loop을 producer transaction에 묶기 + consumer offset commit을 같은 트랜잭션으로.</KVItem>
+  <KVItem term="비용">throughput 3~10% 페널티. transactional overhead.</KVItem>
+  <KVItem term="경계">외부 sink (DB·외부 API)로 나가는 순간 *idempotency key*가 다시 필요. EOS는 *Kafka 안*에서만.</KVItem>
+</KV>
+
+<Eyebrow>Storage</Eyebrow>
+
+## Tiered Storage + Compacted Topic
+
+<KV>
+  <KVItem term="Tiered Storage (KIP-405, Kafka 3.6 GA)">local broker disk + remote object storage(S3). retention.ms를 늘려도 broker 디스크 안 폭주. 2026 시점 *retention 디스크 폭증* 문제의 정답.</KVItem>
+  <KVItem term="Compacted topic"><code>cleanup.policy=compact</code>. retention.ms와 *완전히 다른* 보존 모델: 같은 key의 *최신 값만* 유지. changelog topic·CDC·state store(KStreams)의 토대.</KVItem>
+  <KVItem term="Mixed mode"><code>cleanup.policy=compact,delete</code> 둘 다. 최신 값 유지 + 일정 시간 후 삭제.</KVItem>
+</KV>
+
+<Eyebrow>Outbox vs CDC</Eyebrow>
+
+## 두 방식의 트레이드오프
+
+<DataTable>
+  <thead><tr><th></th><th>Polling outbox</th><th>Debezium CDC</th></tr></thead>
+  <tbody>
+    <tr><td>지연</td><td>poll 간격 (100ms~1s)</td><td>binlog·WAL 따라잡기 (100ms 이하)</td></tr>
+    <tr><td>운영 부담</td><td>publisher app 운영</td><td>Kafka Connect 클러스터 + Debezium</td></tr>
+    <tr><td>스키마 결합</td><td>비즈니스 테이블과 분리 (outbox 테이블 별도)</td><td>내부 테이블 스키마가 외부 계약화 위험</td></tr>
+    <tr><td>재시작 중복</td><td><code>published=true</code> 마킹으로 멱등</td><td>LSN/binlog offset 관리. KIP-618 exactly-once source connector</td></tr>
+    <tr><td>트랜잭션 atomicity</td><td>같은 TX (outbox INSERT가 비즈니스 변경과 묶임)</td><td>같은 TX (outbox 테이블 사용) + Debezium Outbox SMT (<code>io.debezium.transforms.outbox.EventRouter</code>)</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  Debezium은 *outbox 테이블* 자체가 아니라 *WAL·binlog 변화*를 읽습니다. outbox row의 INSERT가 곧 publish trigger. *envelope을 비즈니스 이벤트로 변환*하려면 Outbox SMT를 명시적으로 걸어야 합니다.
+</Callout>
+
+<Eyebrow>Rebalance 함정</Eyebrow>
+
+## 가장 흔한 원인: max.poll.interval.ms
+
+실무에서 rebalance storm의 가장 흔한 원인은 **소비자가 한 batch 처리를 너무 오래 함**. coordinator가 dead로 간주 → rebalance → 다음 batch도 같은 일 반복.
+
+<Steps>
+  <li><code>max.poll.interval.ms</code> 초과 시 coordinator가 consumer를 leave 처리</li>
+  <li>poll 루프와 처리 루프를 *분리*: blocking 작업은 별도 thread pool로</li>
+  <li>heartbeat thread는 별도 (Kafka 0.10.1+): poll 안에서 자동 작동하지만 처리 너무 길면 poll 자체가 안 됨</li>
+  <li>처리 시간이 일정치 않으면 <code>max.poll.records</code>를 작게 (예: 100)</li>
+</Steps>
+
+<Eyebrow>Producer 튜닝</Eyebrow>
+
+## Throughput을 끌어올리는 knob
+
+p99 latency를 보존하면서 throughput을 1.5~3배 올리는 핵심 knob:
+
+<KV>
+  <KVItem term="linger.ms">producer가 batch 채워질 때까지 대기하는 시간 (5~20ms 권장). 너무 짧으면 batch 작음, 너무 길면 latency 증가.</KVItem>
+  <KVItem term="batch.size">batch 최대 크기 (보통 16KB~1MB). linger.ms와 함께 튜닝.</KVItem>
+  <KVItem term="compression.type"><code>zstd</code>(권장)·<code>lz4</code>·<code>snappy</code>·<code>gzip</code>. zstd가 압축률·CPU 균형 최선. 대역폭 절약 + broker 디스크 절약.</KVItem>
+  <KVItem term="acks=all + idempotent">throughput 약간 손실, durability·중복 제거 모두 보장 (3.0+ default).</KVItem>
+</KV>
+
+<Eyebrow>자매 분담</Eyebrow>
+
+## 인접 페이지와의 경계
+
+<KV>
+  <KVItem term="TCP · UDP"><strong>전송 보장 비교</strong>(reliable vs unreliable)의 토대. 본 페이지는 *application layer*에서 *영속*까지.</KVItem>
+  <KVItem term="신뢰성 패턴"><strong>retry·timeout·circuit breaker</strong>는 거기서. 본 페이지는 *비동기*가 풀어주는 영역.</KVItem>
+  <KVItem term="분산 합의"><strong>Kafka KRaft의 metadata 합의</strong>는 거기서. 본 페이지는 partition log의 운영.</KVItem>
+  <KVItem term="관측"><strong>consumer lag 메트릭·trace span</strong>은 거기서. 본 페이지는 lag이 *무엇을 의미*하는지.</KVItem>
+  <KVItem term="Rate Limiting"><strong>producer 입력 제한</strong>은 거기서. 본 페이지는 backpressure 신호.</KVItem>
+</KV>

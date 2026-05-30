@@ -1,0 +1,380 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "22 · Distributed Consensus",
+  title: "분산 합의",
+  subtitle: (
+    <>
+      <Accent>여러 노드</Accent>가 하나의 진실에 도달하기
+    </>
+  ),
+  lead: (
+    <>
+      운영 인프라의 절반이 합의 위에 서 있습니다: etcd(<a href="/docs/advanced/k8s-net">K8s</a>) · ZooKeeper · <a href="/docs/advanced/messaging">Kafka KRaft</a> · Vault HA · DB leader election.
+      "장애가 나도 split-brain은 안 난다"라는 약속이 어떻게 가능한지, 그리고 그 반대편의 *eventual consistency* (CRDT · gossip)가 어떤 트레이드오프를 받아들이는지 봅니다.
+    </>
+  ),
+};
+
+<Eyebrow>문제</Eyebrow>
+
+## 왜 합의가 필요한가
+
+같은 시스템을 여러 노드에 복제했을 때 세 가지 운영 결정이 *반드시* 단일 답이어야 합니다.
+
+<KV>
+  <KVItem term="Leader election">"누가 쓰기를 받는가" : 둘이 동시에 쓰면 split-brain.</KVItem>
+  <KVItem term="Replicated log">"이번 트랜잭션의 순서는 N번" : 노드마다 다르면 상태 분기.</KVItem>
+  <KVItem term="Distributed lock / lease">"이 리소스는 X가 잡고 있다" : 충돌 시 데이터 손상.</KVItem>
+</KV>
+
+세 가지가 본질은 같은 문제(*과반이 동의하는 단일 결정*)라서 같은 알고리즘으로 풀립니다.
+
+<Callout>
+  *eventually consistent* 시스템도 합의를 *피하지* 않습니다 : 멤버십·schema·configuration처럼 *드물지만 정확해야* 하는 결정을 위해 내부에 합의 컴포넌트를 둡니다 (Cassandra의 hinted handoff 정책, DynamoDB의 metadata service).
+</Callout>
+
+<Eyebrow>Raft 한눈에</Eyebrow>
+
+## 가장 표준화된 합의 알고리즘
+
+Raft는 *Term·Role·Log* 세 가지로 구성됩니다.
+
+<DataTable>
+  <thead><tr><th>요소</th><th>의미</th></tr></thead>
+  <tbody>
+    <tr><td>Term</td><td>전역 단조 증가 카운터. 새 선거마다 +1.</td></tr>
+    <tr><td>Role</td><td>Follower → Candidate → Leader (timeout 시 전이)</td></tr>
+    <tr><td>RequestVote RPC</td><td>Candidate가 과반 표를 모으면 Leader</td></tr>
+    <tr><td>AppendEntries RPC</td><td>Leader가 log entry를 follower에 복제 + heartbeat</td></tr>
+    <tr><td>Commit Index</td><td>과반이 복제한 index까지 *committed*. state machine에 적용.</td></tr>
+  </tbody>
+</DataTable>
+
+<Diagram>
+  <svg viewBox="0 0 900 200" role="img" aria-label="Raft role transition">
+    <g fontFamily="JetBrains Mono" fontSize="12">
+      <rect x="40" y="60" width="160" height="60" rx="8" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.6"/>
+      <text x="120" y="88" textAnchor="middle" fill="#EDEDEF" fontSize="14">Follower</text>
+      <text x="120" y="106" textAnchor="middle" fill="#8A8F98" fontSize="11">heartbeat 수신</text>
+      <rect x="370" y="60" width="160" height="60" rx="8" fill="#4a3514" stroke="#F4B942" strokeOpacity="0.6"/>
+      <text x="450" y="88" textAnchor="middle" fill="#EDEDEF" fontSize="14">Candidate</text>
+      <text x="450" y="106" textAnchor="middle" fill="#8A8F98" fontSize="11">RequestVote 발송</text>
+      <rect x="700" y="60" width="160" height="60" rx="8" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.7"/>
+      <text x="780" y="88" textAnchor="middle" fill="#EDEDEF" fontSize="14">Leader</text>
+      <text x="780" y="106" textAnchor="middle" fill="#8A8F98" fontSize="11">AppendEntries 송신</text>
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5E6AD2"/>
+        </marker>
+      </defs>
+      <line x1="200" y1="90" x2="370" y2="90" stroke="#5E6AD2" strokeWidth="2" markerEnd="url(#ar)"/>
+      <text x="220" y="80" fill="#8A8F98" fontSize="11">election timeout</text>
+      <line x1="530" y1="90" x2="700" y2="90" stroke="#5BD5A0" strokeWidth="2" markerEnd="url(#ar)"/>
+      <text x="540" y="80" fill="#8A8F98" fontSize="11">과반 표 획득</text>
+      <path d="M780 120 Q 780 160 450 160 Q 120 160 120 120" fill="none" stroke="#F1657A" strokeWidth="2" markerEnd="url(#ar)" strokeDasharray="4 3"/>
+      <text x="380" y="175" fill="#F1657A" fontSize="11">더 높은 Term 발견 → Follower로 후퇴</text>
+    </g>
+  </svg>
+</Diagram>
+
+<Callout>
+  *모든* role 전이가 Term 단조성 검사를 거칩니다. Leader가 자기보다 큰 Term을 보면 즉시 Follower로. 이게 split-brain을 *log* 단위로 막는 안전장치 (network partition으로 두 Leader가 존재해도 새 Term의 Leader만 commit 가능).
+</Callout>
+
+<Eyebrow>Quorum</Eyebrow>
+
+## 왜 과반인가
+
+N개 노드에서 *과반(N/2 + 1)*이 동의해야 commit. 이유는 두 가지.
+
+<Callout>
+  <strong>왜 두 과반이 반드시 겹치나 (pigeonhole 직관)</strong>. 5 노드 클러스터에서 두 과반은 각각 3 노드. 두 집합 합 = 6 > 5 = 전체 노드 수. 따라서 *최소 1 노드*는 두 과반 모두에 속함 (비둘기집 원리). 그 공통 노드가 이전 결정을 기억하므로 새 Leader가 *이전 commit을 못 본 채 선출*되는 일이 수학적으로 불가능.
+</Callout>
+
+<PCBox>
+  <PC tone="good" title="과반의 수학적 보장">
+    <ul>
+      <li>두 *과반*은 반드시 *최소 1 노드* 공통: 그 노드가 이전 결정을 알고 있음</li>
+      <li>새 Leader는 이전 commit을 *반드시* 본 log를 갖는 후보 중에서만 선출 가능</li>
+      <li>결과: 한 번 committed된 entry는 이후 모든 Term에서 살아남음</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="짝수 노드의 함정">
+    <ul>
+      <li>4 노드는 과반 3 필요 → 1 장애만 허용. <strong>3 노드와 동일한 fault tolerance</strong>인데 통신·디스크 비용은 더 큼 (5 노드라야 2 장애 허용)</li>
+      <li>3 노드(과반 2): 1 장애 허용. 5 노드: 2 장애 허용. <strong>홀수가 표준</strong></li>
+      <li>지역 분산 시 *3 zone* 권장 (1 zone 장애에도 과반 유지)</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>비교</Eyebrow>
+
+## Raft · Multi-Paxos · ZAB
+
+<DataTable>
+  <thead><tr><th>알고리즘</th><th>대표 시스템</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td>Raft</td><td>etcd · Consul · TiKV · CockroachDB · Vault</td><td>이해 가능성에 최적화. log = 일렬 순서. 실무 표준.</td></tr>
+    <tr><td>Multi-Paxos</td><td>Google Chubby · Spanner</td><td>Raft의 이론적 조상. leader 전제·복잡한 설명.</td></tr>
+    <tr><td>ZAB (Zookeeper Atomic Broadcast)</td><td>ZooKeeper · Kafka (구버전)</td><td>Paxos 변형. zxid로 순서 보장.</td></tr>
+    <tr><td>Viewstamped Replication</td><td>Harp · 일부 DB</td><td>Paxos와 동시 발명. 거의 동등.</td></tr>
+    <tr><td>EPaxos · Flexible Paxos</td><td>연구·CockroachDB 일부</td><td>leaderless · 지역 최적화 변형.</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  실무에선 *Raft가 압도적 표준*. 같은 보장(<strong>linearizability</strong> = 모든 노드가 *마치 단일 머신처럼 보이는* 가장 강한 일관성: 쓰기 직후 어디서 읽든 같은 값)을 제공하면서 코드가 단순하고 디버깅 가능. Paxos는 *논문 읽을 때* 만나고, ZAB은 *ZooKeeper 트러블슈팅*에서만 만남.
+</Callout>
+
+<Callout>
+  <strong>CAP 정리 한 줄</strong>. 네트워크 partition이 일어났을 때 <strong>C</strong>(Consistency = 모든 노드가 같은 데이터를 본다) 와 <strong>A</strong>(Availability = 모든 요청에 응답한다)는 동시에 만족 불가. <strong>P</strong>(Partition tolerance)는 *현실 네트워크의 전제*라 사실상 *C 또는 A의 선택*. Raft·etcd = CP(C 선택), Cassandra·DynamoDB = AP(A 선택).
+</Callout>
+
+<Eyebrow>Lease</Eyebrow>
+
+## Read를 빠르게: Leader Lease
+
+Raft가 *쓰기*는 과반 합의가 필요하지만 *읽기*도 매번 round-trip 하면 RTT 폭증. 해결: **Leader Lease**.
+
+<Steps>
+  <li>Leader가 *현재 시각 + T초*까지 "내가 Leader"라는 lease를 follower로부터 받음</li>
+  <li>Lease 동안 Leader는 *로컬에서 즉시 읽기 응답* (RTT 0)</li>
+  <li>Lease 만료 전 갱신. 만료 후엔 다시 합의 필요</li>
+  <li>전제: 노드 간 *시계 편차 한계*가 lease 갱신 마진보다 작음 (NTP 동기화)</li>
+</Steps>
+
+<Callout tone="bad">
+  Lease는 *시계*에 의존하는 유일한 부분. 노드 간 clock drift가 lease 마진을 넘으면 split-brain 위험. 운영 시 NTP 모니터링 필수. Google Spanner는 *TrueTime* (GPS+원자시계)으로 이 문제를 해결.
+</Callout>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 흔히 만나는 실패 모드
+
+<PCBox>
+  <PC tone="bad" title="Split-brain · Fencing">
+    <ul>
+      <li>old Leader가 partition에서 자기는 여전히 Leader라 믿고 외부에 작업 지시</li>
+      <li>방어: *fencing token* (단조 증가 ID)를 모든 외부 호출에 부착, 수신자가 이전 토큰 거부</li>
+      <li>Kafka·HDFS·etcd 모두 fencing token 기반</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Slow Follower · Log Drift">
+    <ul>
+      <li>한 follower가 디스크 느려서 commit 지연 → 전체 latency 증가</li>
+      <li>Leader는 *과반*만 기다리므로 felled follower 1대는 견딤. 2대 felled되면 commit 중단</li>
+      <li>monitoring: <code>raft_log_lag</code>, <code>committed_index</code> 게이지</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Snapshot · Compaction">
+    <ul>
+      <li>log가 무한 증가하면 디스크 폭주: 주기적 snapshot + log truncate</li>
+      <li>snapshot 중 새 노드 합류 시 *전체 snapshot 전송* (수십 GB) → 네트워크 폭증</li>
+      <li>etcd 2GB 기본 한계, 그 이상은 별도 튜닝 필요</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Write Blast · 멤버십 변경">
+    <ul>
+      <li>large value 쓰기·burst → AppendEntries 패킷이 NIC 큐 폭주 → heartbeat 지연 → 선거</li>
+      <li>멤버십 변경(add/remove node)은 *joint consensus* 또는 single-step 변경 알고리즘 필요</li>
+      <li>한 번에 한 노드만 추가/제거하는 게 안전</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>운영 사례</Eyebrow>
+
+## etcd · ZooKeeper · KRaft · Vault
+
+<DataTable>
+  <thead><tr><th>시스템</th><th>합의 알고리즘</th><th>용도</th><th>운영 디테일</th></tr></thead>
+  <tbody>
+    <tr><td>etcd (K8s)</td><td>Raft</td><td>K8s API 상태 저장</td><td>3·5 노드 권장. 2GB 한계. compaction 주기 튜닝.</td></tr>
+    <tr><td>ZooKeeper</td><td>ZAB</td><td>HBase · Kafka(구) · 분산 락</td><td>session timeout 튜닝 핵심. ephemeral node로 lock.</td></tr>
+    <tr><td>Kafka KRaft</td><td>Raft 변형 (KIP-500, <strong>pull-based</strong>)</td><td>ZooKeeper 의존 제거</td><td>controller quorum (3·5). follower가 leader에서 fetch (정통 Raft의 push AppendEntries와 반대).</td></tr>
+    <tr><td>Vault HA</td><td>Raft (integrated storage)</td><td>secret 관리·암호화 키</td><td>seal/unseal 워크플로. backup 주의.</td></tr>
+    <tr><td>Consul</td><td>Raft</td><td>service discovery · KV · ACL</td><td>WAN federation (지역 간 gossip).</td></tr>
+    <tr><td>CockroachDB · TiKV · Spanner</td><td>Raft (or Paxos)</td><td>분산 SQL</td><td>각 *range*마다 별도 Raft group (수만 개).</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>반대편</Eyebrow>
+
+## Eventual Consistency
+
+합의의 비용(과반 RTT)을 *받아들이지 않는* 시스템들. 대신 *언젠가는 일치*에 만족.
+
+<KV>
+  <KVItem term="Last-Write-Wins (LWW)">timestamp 큰 쓰기가 이김. 단순하지만 *시계 편차* 시 데이터 손실.</KVItem>
+  <KVItem term="Vector Clock">"누가 보고 누가 못 봤는지" 인과관계 추적. Dynamo *논문*(2007)은 vector clock 기반이지만 AWS DynamoDB *제품*은 별개(LWW 계열). Riak이 채택했다가 이후 <strong>DVV (dotted version vector)</strong> 로 진화: vector clock의 sibling 폭주 문제 해결. 충돌 *감지* 가능, 자동 해결은 아님.</KVItem>
+  <KVItem term="Hinted Handoff">Coordinator 노드가 일시 장애 노드의 쓰기를 보관 후 복구 시 전달 (Cassandra).</KVItem>
+  <KVItem term="Read Repair">읽기 시 여러 복제본 비교, 뒤처진 노드를 갱신 (Cassandra).</KVItem>
+  <KVItem term="Anti-entropy">주기적 Merkle tree 비교로 복제본 동기화 (DynamoDB·Cassandra).</KVItem>
+</KV>
+
+<Eyebrow>CRDT</Eyebrow>
+
+## 충돌 없이 합쳐지는 자료구조
+
+*Conflict-free Replicated Data Type*. 두 복제본이 분기된 채 독립 업데이트한 뒤 *어떤 순서로 합쳐도 같은 결과*. 수학적으로 commutative + associative + idempotent.
+
+<DataTable>
+  <thead><tr><th>CRDT</th><th>구조</th><th>실사용</th></tr></thead>
+  <tbody>
+    <tr><td>G-Counter</td><td>노드별 카운터 합산</td><td>like count · view count</td></tr>
+    <tr><td>PN-Counter</td><td>증가·감소 분리 G-Counter 쌍</td><td>up/down vote</td></tr>
+    <tr><td>OR-Set (Observed-Remove)</td><td>add tag + remove tag</td><td>shopping cart · tag</td></tr>
+    <tr><td>LWW-Element-Set</td><td>timestamp 비교</td><td>caches with TTL</td></tr>
+    <tr><td>RGA · Yjs · Automerge</td><td>position 기반 sequence CRDT</td><td>Figma · Linear · Notion 협업 편집</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  Figma·Linear의 실시간 협업이 가능한 이유. 두 사용자가 *오프라인*에서 동시에 편집해도 재연결 시 자동 병합. 단, *의미적 충돌* (같은 셀에 다른 값)은 CRDT가 *수학적으로* 합치지만 *사용자 의도*까지 보존하진 않음 : LWW 또는 후처리 정책 필요.
+</Callout>
+
+<Eyebrow>Gossip</Eyebrow>
+
+## 멤버십·실패 감지
+
+전수가 아닌 *전염* 방식. 노드가 주기적으로 *랜덤 다른 노드*에 자기 상태를 전파. log(N)번이면 전체 클러스터 도달.
+
+<Steps>
+  <li>각 노드가 *멤버 리스트*와 *heartbeat 카운터* 보유</li>
+  <li>매 1초 랜덤 K개 이웃에 자기 리스트 전파</li>
+  <li>수신 노드는 더 최신 정보(높은 카운터)로 자기 리스트 갱신</li>
+  <li>일정 시간 heartbeat 못 받은 노드는 *suspect → dead*로 마킹</li>
+</Steps>
+
+<DataTable>
+  <thead><tr><th>시스템</th><th>용도</th></tr></thead>
+  <tbody>
+    <tr><td>Cassandra</td><td>클러스터 멤버십·token range 전파</td></tr>
+    <tr><td>Consul · Serf</td><td>service discovery · 실패 감지</td></tr>
+    <tr><td>HashiCorp memberlist</td><td>Consul/Nomad의 gossip 라이브러리</td></tr>
+    <tr><td>Redis Cluster</td><td>16,384 슬롯 분배·실패 감지</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>분담</Eyebrow>
+
+## Strong vs Eventual: 언제 무엇을
+
+<DataTable>
+  <thead><tr><th></th><th>Strong (Raft·Paxos)</th><th>Eventual (CRDT·gossip)</th></tr></thead>
+  <tbody>
+    <tr><td>지연</td><td>과반 RTT</td><td>로컬 즉시</td></tr>
+    <tr><td>가용성 (CAP)</td><td>partition 시 일부 노드 거부</td><td>partition 중에도 쓰기 허용</td></tr>
+    <tr><td>적합한 데이터</td><td>금융 잔액 · 멤버십 · 설정 · 락</td><td>좋아요 · 조회수 · 협업 문서 · 카탈로그</td></tr>
+    <tr><td>운영 비용</td><td>3·5 노드 + monitoring + snapshot</td><td>분산 더 자유롭지만 충돌 정책 설계 필요</td></tr>
+    <tr><td>인터뷰 답변 키</td><td>"linearizable이 필요하면"</td><td>"가용성이 우선이고 잠시 분기 허용"</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>Read 최적화 심화</Eyebrow>
+
+## ReadIndex vs Lease: etcd가 ReadIndex를 default로 한 이유
+
+Lease는 *시계*에 의존하기 때문에 운영에선 *clock drift*로 split-brain 위험. etcd는 **ReadIndex protocol**(시계 의존 없음)을 default로 합니다.
+
+<Steps>
+  <li>Leader가 *현재 commit index*를 기억하고 follower에 heartbeat 발송</li>
+  <li>과반 follower로부터 응답을 받으면 "내가 여전히 Leader다" 확인</li>
+  <li>그 commit index 이상이 state machine에 적용되었음을 보장 후 read 응답</li>
+  <li>RTT 1 round 추가, 그러나 *시계 의존 없음*: clock skew와 무관하게 linearizable</li>
+</Steps>
+
+<DataTable>
+  <thead><tr><th></th><th>Leader Lease</th><th>ReadIndex</th></tr></thead>
+  <tbody>
+    <tr><td>지연</td><td>RTT 0 (로컬)</td><td>RTT 1 round (heartbeat)</td></tr>
+    <tr><td>시계 의존</td><td><strong>의존</strong> (clock skew 위험)</td><td>없음</td></tr>
+    <tr><td>etcd default</td><td>OFF</td><td><strong>ON</strong></td></tr>
+    <tr><td>적합</td><td>read-heavy + NTP 신뢰 환경</td><td>운영급 (대부분)</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  Lease만 가르치고 ReadIndex가 빠지면 *etcd 운영 절반만 가르친 페이지*. 면접에서 "Lease가 어떤 정확한 시나리오에서 split-brain을 만드나?" 후속 질문이 ReadIndex로 이어집니다.
+</Callout>
+
+## Pre-Vote (PreCandidate) 최적화
+
+파티션에서 복귀한 노드가 Term을 마구 올려 클러스터를 *disrupt* 시키는 문제: 모든 프로덕션 Raft 구현(etcd, TiKV, CockroachDB, Consul)이 **Pre-Vote**로 방어합니다.
+
+<Steps>
+  <li>Candidate가 되기 전 *사전 투표*: "내가 선거 시작해도 되나?" 질문만</li>
+  <li>과반이 OK라고 해야 *실제* Term을 +1하고 RequestVote 발송</li>
+  <li>고립됐다 복귀한 노드의 의미 없는 Term bump 방지</li>
+</Steps>
+
+<Eyebrow>고급 운영 함정</Eyebrow>
+
+## 프로덕션 Raft·CRDT 운영자가 매일 만지는 디테일
+
+<PCBox>
+  <PC tone="bad" title="fsync 비용 · group commit">
+    <ul>
+      <li>Raft commit은 quorum 노드 각각 <strong>fsync per entry</strong> 필요. NVMe에서도 sync write는 비쌈</li>
+      <li><strong>Group commit</strong>·batch entries로 throughput 향상 (latency 약간 손실)</li>
+      <li>EBS gp2 → gp3 sync write 차이로 leader change rate 3배 변동 가능</li>
+      <li><code>--unsafe-no-fsync</code> 모드는 재시작 시 commit 손실 가능: prod 절대 금지</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Learner · Witness 멤버십">
+    <ul>
+      <li>etcd v3.4+ <code>Learner</code>: voting 권한 없이 log만 catch-up. 안전한 add 패턴 (catch-up 후 promote)</li>
+      <li>MongoDB <code>arbiter</code>, Spanner <code>witness</code>: voting만 하고 data 저장 안 함. cross-zone 비용 절약</li>
+      <li>learner 없이 voter 직추가하면 catch-up 중 quorum 깨질 수 있음: cluster 정지 사고</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="etcd 권장 한계 8GB · ZK 락">
+    <ul>
+      <li>etcd 기본 2GB, <strong>권장 최댓값 8GB</strong>. 그 이상은 메모리·snapshot 압박</li>
+      <li><strong>defrag stop-the-world</strong>: 메모리 회수가 모든 요청 막음: leader follower 분리해 순차 실행</li>
+      <li>ZK 분산 락 = <strong>ephemeral + sequential</strong> 조합. sequential 없으면 *herd effect* (watch 한꺼번에 깨짐)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="CRDT tombstone GC">
+    <ul>
+      <li>OR-Set·RGA(Yjs·Automerge)는 remove를 tombstone으로 표현: 누적 시 메모리·스토리지 폭주</li>
+      <li>Yjs GC 옵션 켜면 오프라인 피어가 *6개월 후* 돌아왔을 때 데이터 손실 위험</li>
+      <li>tombstone GC 정책과 오프라인 허용 기간의 트레이드오프: 협업 도구 설계의 결정적 knob</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>정량</Eyebrow>
+
+## Spanner TrueTime · multi-Raft 수치
+
+<DataTable>
+  <thead><tr><th>항목</th><th>값</th><th>맥락</th></tr></thead>
+  <tbody>
+    <tr><td>Spanner TrueTime ε</td><td>평균 1ms 미만, 최대 7ms</td><td>2012 OSDI 논문. GPS+원자시계 기반</td></tr>
+    <tr><td><strong>Commit-wait</strong></td><td>= ε</td><td>외부 일관성 위해 ε만큼 명시적 wait: write latency에 직접 추가</td></tr>
+    <tr><td>etcd 권장 최댓값</td><td>8GB</td><td>2GB 기본, 8GB 이상은 운영 압박</td></tr>
+    <tr><td>multi-Raft</td><td>range 단위 별도 Raft group</td><td>단일 그룹 내 일렬 순서 + 시스템 전체 병렬. CockroachDB·TiKV는 수만 개 Raft group 운영</td></tr>
+    <tr><td>Pre-Vote 도입</td><td>모든 프로덕션 Raft</td><td>etcd 3.x, TiKV, CockroachDB, Consul</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>자매 분담</Eyebrow>
+
+## 인접 페이지와의 경계
+
+<KV>
+  <KVItem term="K8s 네트워킹"><strong>etcd 운영</strong>은 거기서. 본 페이지는 *왜* etcd에 Raft가 들어가는지.</KVItem>
+  <KVItem term="신뢰성 패턴"><strong>장애 격리</strong>(circuit breaker·bulkhead)는 거기서. 본 페이지는 합의 *내부* 실패 모드.</KVItem>
+  <KVItem term="클라우드 심화"><strong>cell 기반·zone 분리</strong>는 거기서. 본 페이지는 cell *내부*의 메타데이터 합의.</KVItem>
+  <KVItem term="메시지 큐"><strong>Kafka 운영</strong>(파티션·ISR)은 거기서. 본 페이지는 Kafka KRaft의 합의 토대.</KVItem>
+</KV>

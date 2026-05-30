@@ -1,0 +1,298 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "21 · NAT Traversal",
+  title: "NAT Traversal",
+  subtitle: (
+    <>
+      <Accent>방화벽 뒤</Accent>에 도달하는 법
+    </>
+  ),
+  lead: (
+    <>
+      outbound는 자유로운데 inbound가 막혀 있는 비대칭이 2026년 운영의 디폴트입니다.
+      같은 "NAT 뒤"여도 토폴로지(P2P 양쪽 NAT vs 서버만 NAT)에 따라 풀이가 달라집니다.
+      reverse tunnel·bastion·ZTNA가 같은 문제를 어떤 신뢰 모델로 푸는지 봅니다.
+    </>
+  ),
+};
+
+<Eyebrow>문제</Eyebrow>
+
+## 같은 문제 두 모양
+
+NAT/방화벽 뒤에 있는 서비스에 도달해야 한다 : 같은 문장도 토폴로지가 두 가지입니다.
+
+<DataTable>
+  <thead><tr><th>모양</th><th>양쪽 상황</th><th>전형 도구</th><th>본 페이지 다룸</th></tr></thead>
+  <tbody>
+    <tr><td>P2P · 양쪽 모두 NAT 뒤</td><td>둘 다 outbound만 가능</td><td>STUN / TURN / ICE</td><td>요약 + <a href="/docs/ip-routing">ip-routing</a> 참조</td></tr>
+    <tr><td>Server expose · 서버만 NAT 뒤</td><td>클라이언트는 인터넷, 서버는 outbound only</td><td>reverse tunnel, bastion, ZTNA</td><td><strong>본진</strong></td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  두 모양은 *해결 방식*이 완전히 다릅니다. P2P는 *양쪽이 동시에* 외부로 punch해 NAT 매핑을 유지. server expose는 *서버가 outbound로 control 채널을* 미리 열어 두고 *외부 엣지가 inbound를 받아* 흘려 줍니다. 같은 "NAT 뒤"여도 별개 토픽으로 다뤄야 본질이 흐려지지 않습니다.
+</Callout>
+
+<Callout>
+  <strong>처음 보는 약어 사전</strong>. <strong>STUN</strong>(Session Traversal Utilities for NAT): 자기 공인 IP·포트를 외부 서버에 물어보는 프로토콜. <strong>TURN</strong>(Traversal Using Relays around NAT): 둘 다 못 뚫을 때 중간에 끼는 *relay 서버*. <strong>ICE</strong>(Interactive Connectivity Establishment): STUN·TURN·직접 연결 후보를 모두 모아 *가장 빠른 경로 자동 선택*. P2P 메커니즘 자세히는 <a href="/docs/ip-routing">ip-routing</a>.
+</Callout>
+
+<Eyebrow>핵심 발상</Eyebrow>
+
+## Outbound로 Inbound를 흉내내다
+
+서버 쪽 프로세스가 인터넷의 *엣지 노드*(= Cloudflare 200+ PoP·ngrok region edge처럼 *공용 인터넷에 떠 있는 anycast 서버*. 사용자 가까이 분산되어 outbound 연결을 받아주는 인프라)에 outbound 연결을 미리 열어 두고, 그 연결을 *역방향으로* 사용합니다. 클라이언트는 엣지에 평범한 요청을 보내고, 엣지는 이미 열린 outbound 채널을 거슬러 서버에 전달.
+
+방화벽 입장에선 "내부 → 외부" 연결만 존재하므로 inbound 룰을 건드릴 필요가 없습니다. 비대칭의 가장 깔끔한 우회.
+
+<Lane
+  nodes={[
+    { label: "C", meta: "Client" },
+    { label: "E", meta: <>Edge<br/>(public)</> },
+    { label: "T", meta: <>Tunnel<br/>process</> },
+    { label: "S", meta: <>Server<br/>(NAT 뒤)</> },
+  ]}
+  runLabel="▶ reverse tunnel"
+  steps={[
+    { say: "초기화: T가 outbound로 E에 영구 연결 (TLS · WebSocket · QUIC)" },
+    { fly: { label: "outbound CONNECT", cls: "syn", duration: 1100 } },
+    { say: "E는 등록 정보(도메인·인증) 저장. 채널은 keep-alive로 유지." },
+    { say: "이후 C가 도메인으로 E에 요청." },
+    { fly: { label: "HTTPS GET app.example", cls: "http", duration: 900, from: "left" } },
+    { say: "E는 매핑된 채널을 거슬러 T로 요청 전달." },
+    { fly: { label: "tunneled request", cls: "ack", duration: 1100, from: "right" } },
+    { say: "T가 로컬 S로 평문 또는 mTLS 호출. 응답 역경로." },
+    { fly: { label: "200 OK", cls: "ack", duration: 900 } },
+    { say: "방화벽 로그엔 outbound 연결만 보임. inbound 룰 변경 0." },
+  ]}
+/>
+
+<Eyebrow>도구 카탈로그</Eyebrow>
+
+## 누가 어떤 트레이드오프
+
+<DataTable>
+  <thead><tr><th>도구</th><th>전송</th><th>운영자</th><th>identity</th><th>적합</th></tr></thead>
+  <tbody>
+    <tr><td><code>ssh -R</code></td><td>SSH</td><td>자체</td><td>SSH 키</td><td>가장 단순, 1회성·디버그</td></tr>
+    <tr><td>ngrok</td><td>TLS</td><td>SaaS</td><td>토큰</td><td>개발 데모, 빠른 공유</td></tr>
+    <tr><td><strong>Cloudflare Tunnel</strong> (<code>cloudflared</code>)</td><td>QUIC/HTTP2</td><td>SaaS</td><td>Cloudflare Access (OIDC, device posture)</td><td>운영급 expose, ZTNA 통합</td></tr>
+    <tr><td><strong>Tailscale Funnel</strong></td><td>WireGuard</td><td>SaaS (mesh)</td><td>SSO·tag·ACL</td><td>mesh + 선택적 public expose</td></tr>
+    <tr><td>frp</td><td>TCP/KCP/QUIC</td><td>자체 호스팅</td><td>토큰</td><td>자체 인프라, 다중 포트</td></tr>
+    <tr><td>bore · rathole</td><td>TCP</td><td>자체 호스팅</td><td>토큰</td><td>최소 OSS, low-overhead</td></tr>
+    <tr><td><strong>Teleport</strong></td><td>HTTPS</td><td>자체/SaaS</td><td>SSO + short-lived cert</td><td>infra 접근(SSH·DB·K8s) 통합</td></tr>
+    <tr><td>AWS SSM Session Manager</td><td>HTTPS</td><td>AWS</td><td>IAM</td><td>EC2 SSH 대체 (inbound 22 = 0)</td></tr>
+  </tbody>
+</DataTable>
+
+```bash
+# 가장 단순: ssh -R로 로컬 8080을 bastion의 9090에 노출
+ssh -R 9090:localhost:8080 user@bastion -N
+
+# Cloudflare Tunnel (named, 운영급)
+cloudflared tunnel create myapp
+cloudflared tunnel route dns myapp app.example.com
+cloudflared tunnel run --token <TOKEN>     # token-mode (Zero Trust 대시보드)
+# 또는 local credentials.json: cloudflared tunnel run myapp
+
+# Tailscale Funnel (mesh + public expose)
+tailscale serve --bg https+insecure://localhost:8080
+tailscale funnel 443 on
+
+# AWS SSM (inbound 22 닫고 콘솔/CLI에서 셸 진입)
+aws ssm start-session --target i-0abc1234def567
+```
+
+<Callout>
+  "ssh -R N:localhost:M" 한 줄로 데모는 충분합니다.
+  운영에선 *identity 통합*(SSO·OIDC·device posture) + *audit log* + *control plane HA*가 필요해 SaaS(cloudflared/Tailscale) 또는 self-hosted(Teleport)로 옮겨갑니다.
+</Callout>
+
+<Eyebrow>보안 모델</Eyebrow>
+
+## Control plane / Data plane 분리
+
+운영급 reverse tunnel은 두 평면을 명확히 가릅니다.
+
+<KV>
+  <KVItem term="Control plane">터널 등록·인증·정책·라우팅 결정. 엣지가 "이 도메인 요청은 어느 채널로?"를 결정.</KVItem>
+  <KVItem term="Data plane">실제 요청 바이트 흐름. 가능하면 control과 별개 프로세스/노드 (장애·성능 격리).</KVItem>
+  <KVItem term="Identity-aware proxy">엣지에서 OIDC·SAML·SSO 인증 + device posture 검사 후에만 data plane 진입 허용.</KVItem>
+  <KVItem term="Short-lived cert">SSH 키·정적 토큰 대신 *SSO로 발급된 수 분~수 시간짜리 인증서*로 통일. 정책별 TTL: AWS STS·gcloud federated token 1h, Teleport SSH cert 기본 12h, Cloudflare Access·Tailscale session-bound. (자세한 회전 함정은 <a href="/docs/advanced/auth">OAuth · OIDC</a>.)</KVItem>
+  <KVItem term="Audit trail">누가 언제 어떤 자원에 무엇을 했는지 control plane이 기록. SOC2·ISO 27001 컴플라이언스 필수.</KVItem>
+</KV>
+
+<Callout tone="bad">
+  <strong>SaaS 의존의 SPOF</strong>: Cloudflare/Tailscale/ngrok 자체 장애 시 *내부 트래픽이 인터넷 의존*이 된다. 2022 Cloudflare BGP misconfig, 2023 Tailscale control plane 장애 등 실제 사례 다수. 운영급에선 *두 SaaS 동시 운영* 또는 *self-hosted fallback*(Teleport·frp)을 함께 둔다.
+</Callout>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 흔히 만나는 실패 모드
+
+<PCBox>
+  <PC tone="bad" title="연결 폭풍 · 재연결">
+    <ul>
+      <li>엣지 일시 장애 시 수천 노드가 동시 재연결 → control plane DDoS</li>
+      <li><strong>jittered exponential backoff</strong>(1·2·4·8s + ±50%) 표준</li>
+      <li>noop heartbeat이 너무 짧으면 모바일 라디오 깨워 배터리 소모</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="비용 · 트래픽">
+    <ul>
+      <li>SaaS 트래픽 과금: 대용량 다운로드는 reverse tunnel에 부적합</li>
+      <li>엣지 RTT 추가: 글로벌 사용자엔 anycast edge 필수</li>
+      <li>WebSocket 유지에 NAT idle timeout 의식 (보통 30~120s, idle keepalive 필요)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="quick vs named tunnel">
+    <ul>
+      <li>Cloudflare quick tunnel(<code>trycloudflare.com</code>) 도메인 매번 바뀜 : 운영 부적합</li>
+      <li>named tunnel + cert + DNS 사전 등록이 운영 형태</li>
+      <li>ngrok도 free 도메인 random vs reserved subdomain 구분</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="L7 가시성·암호화">
+    <ul>
+      <li>엣지가 TLS terminator면 *엣지에서 패킷 캡처 가능* : 보안 정책 점검 필요</li>
+      <li>end-to-end mTLS면 엣지는 SNI·헤더만 보고 라우팅 (응답 변환 어려움)</li>
+      <li>관측 데이터(트레이스·로그) 어디서 수집할지 사전 명시</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>Bastion과의 비교</Eyebrow>
+
+## SSH bastion · jump host
+
+전통 패턴: 공용 인터넷에 *bastion 호스트* 한 대를 두고 SSH 22를 노출, 내부 호스트는 bastion에서만 접근. *inbound 22를 0으로 만들지는 못한다*는 한계 : 22가 외부에 보이므로 brute-force·zero-day 표적.
+
+<DataTable>
+  <thead><tr><th></th><th>Bastion (전통)</th><th>Reverse Tunnel + ZTNA</th></tr></thead>
+  <tbody>
+    <tr><td>inbound 포트</td><td>SSH 22 (또는 변경 포트)</td><td>0 : outbound only</td></tr>
+    <tr><td>인증</td><td>SSH 키 (또는 SSO 통합)</td><td>SSO + device posture + short-lived cert</td></tr>
+    <tr><td>audit</td><td>SSH 로그 (sshd · auditd)</td><td>control plane 자동 기록 (구조화)</td></tr>
+    <tr><td>운영</td><td>OS 패치·SSH 강화·key 관리</td><td>SaaS 또는 self-hosted control plane</td></tr>
+    <tr><td>대상</td><td>주로 사람 (interactive)</td><td>사람 + 서비스 양쪽</td></tr>
+    <tr><td>session 종료</td><td>SSH 키 회수까지 access 유효</td><td>SSO 세션 만료/회수 즉시 차단</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  AWS SSM Session Manager는 *AWS가 운영하는 reverse tunnel*입니다. EC2 인스턴스의 SSM Agent가 outbound로 SSM 엔드포인트에 연결해 두고, 콘솔에서 SSH 22 *없이* 셸 진입. inbound 22를 0으로 만들 수 있다는 의미에서 ZTNA 패턴의 클라우드 네이티브 구현입니다.
+</Callout>
+
+<Eyebrow>ZTNA로 진화</Eyebrow>
+
+## Identity-aware reverse tunnel
+
+운영급 reverse tunnel은 자연스럽게 *ZTNA(Zero Trust Network Access)*로 흡수됩니다.
+
+<Steps>
+  <li><strong>전통</strong>: bastion + VPN. 네트워크 *경계* 신뢰.</li>
+  <li><strong>단순 reverse</strong>: ngrok / ssh -R. *연결 식별*은 토큰. 누구든 토큰 알면 접근.</li>
+  <li><strong>운영 reverse</strong>: cloudflared / Tailscale. *터널 식별* + SSO 인증.</li>
+  <li><strong>ZTNA</strong>: Cloudflare Access / Teleport / BeyondCorp. *모든 요청*에 대해 identity + device posture + 정책 평가. 네트워크 위치는 신뢰의 근거가 아님.</li>
+</Steps>
+
+자세한 ZTNA 운영 (mTLS rotation·device posture·session lifetime·SPIFFE/SPIRE)은 [OAuth · OIDC 페이지](/docs/advanced/auth)에서 다룹니다.
+
+<Eyebrow>NAT 메커니즘</Eyebrow>
+
+## NAT 타입과 우회 가능성
+
+같은 "NAT 뒤"여도 mapping 동작이 다릅니다 (RFC 4787 BEHAVE).
+
+<DataTable>
+  <thead><tr><th>NAT 타입</th><th>매핑 동작</th><th>STUN 우회</th></tr></thead>
+  <tbody>
+    <tr><td>Full cone</td><td>(srcIP, srcPort): 단일 mapping. 어떤 외부에서도 접근</td><td>가능</td></tr>
+    <tr><td>Restricted cone</td><td>같은 mapping + 외부 IP 화이트리스트</td><td>가능</td></tr>
+    <tr><td>Port-restricted</td><td>외부 IP + 포트 화이트리스트</td><td>가능</td></tr>
+    <tr><td><strong>Symmetric</strong> (Address-and-Port-Dependent Mapping)</td><td>외부 endpoint마다 *다른* mapping</td><td><strong>불가</strong>: TURN relay 필수</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>CGNAT 현실</strong>: 2026년 모바일/일부 ISP는 거의 100% CGNAT. 사용자의 inbound가 *근본적으로 불가능*. 게다가 CGNAT에서 outbound 포트도 공유되어 long-lived WebSocket이 *caller 측 NAT*에 의해 끊기는 사고도 흔함. peer의 CGNAT 비율을 측정 안 하는 WebRTC 서비스는 TURN 비용 폭주의 비밀이 여기 (전체 미디어의 두 자릿수 %까지).
+</Callout>
+
+<Callout tone="bad">
+  <strong>Hairpin NAT · Split-horizon DNS 함정</strong>: reverse tunnel 도입 직후 가장 흔한 인시던트. 내부 클라이언트가 *공인 터널 도메인*으로 자기 서비스 접근 시 hairpin이 안 되거나 내부 DNS와 터널 도메인 DNS가 다른 응답: 내부에서 외부 RTT를 한 번 더 탐. "왜 우리 사이트가 갑자기 느려졌나"의 단골. <strong>split-horizon DNS</strong>로 내부 도메인은 내부 IP로 직결.
+</Callout>
+
+<Eyebrow>운영 정량</Eyebrow>
+
+## 알아두면 좋은 수치
+
+<DataTable>
+  <thead><tr><th>항목</th><th>값</th><th>맥락</th></tr></thead>
+  <tbody>
+    <tr><td>엣지 RTT 추가</td><td>20~80ms</td><td>anycast geo 의존. 한국 사용자 가까운 PoP. 글로벌 +20~30ms 흔함</td></tr>
+    <tr><td>Linux conntrack TCP established</td><td>432,000s (기본 5일)</td><td><code>net.netfilter.nf_conntrack_tcp_timeout_established</code></td></tr>
+    <tr><td>엔터프라이즈 방화벽 idle</td><td>30~60분</td><td>WebSocket keepalive는 이 값의 절반보다 짧게</td></tr>
+    <tr><td>모바일 캐리어 idle</td><td>5~30분</td><td>NAT idle + 라디오 절전</td></tr>
+    <tr><td>TCP keepalive 권장</td><td><code>TCP_KEEPIDLE</code> 30~60s</td><td>WebSocket의 PING/PONG도 같은 효과</td></tr>
+    <tr><td>Cloudflare Tunnel per-replica</td><td>100~500 Mbps</td><td>QUIC + multiplex. 더 큰 처리량은 replica 추가</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>고급 운영 함정</Eyebrow>
+
+## 새벽 3시 인시던트의 단골
+
+<PCBox>
+  <PC tone="bad" title="멀티 리플리카 · graceful drain">
+    <ul>
+      <li>cloudflared·tailscaled를 K8s replica N개로 띄우면 엣지가 round-robin (sticky는 별도 설정)</li>
+      <li>배포 중 SIGTERM 받은 replica의 in-flight 요청은 control plane이 처리: <code>grace-period</code> 명시</li>
+      <li>control 채널 끊긴 동안 엣지가 *502 즉시* 또는 *큐* 동작인지 도구별로 다름</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Forward HTTPS proxy 환경">
+    <ul>
+      <li>엔터프라이즈 outbound가 Zscaler·Bluecoat 경유면 <code>HTTPS_PROXY</code>·<code>NO_PROXY</code> 명시 필요</li>
+      <li>proxy의 TLS interception이 켜져 있으면 cloudflared·tailscaled의 mTLS와 충돌: 인증 실패</li>
+      <li>"outbound는 자유" 전제가 깨지는 환경. 도입 PoC 시 검증 필수</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="TCP-in-TCP HoL blocking">
+    <ul>
+      <li><code>ssh -R</code>로 TCP 위 TCP를 흘리면 두 layer의 retransmit·RTO가 곱해져 throughput 무너짐</li>
+      <li>QUIC·HTTP2 multiplex가 *운영급*인 기술적 이유: 단일 connection 위 여러 stream 독립 처리</li>
+      <li>cloudflared·Teleport가 QUIC·HTTP2 위에서 운영되는 근거</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="NTP skew · conntrack 점유">
+    <ul>
+      <li>NTP 동기화 깨지면 mTLS·JWT 만료 검증이 한 노드에서만 실패: 새벽 야간 사고 단골</li>
+      <li>tunnel client 노드의 모든 inbound 요청이 conntrack 한 줄씩 점유: 단일 노드 conntrack 고갈 위험</li>
+      <li>K8s에서 cloudflared를 *DaemonSet*으로 분산 또는 *전용 노드*로 격리</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>자매 분담</Eyebrow>
+
+## 인접 페이지와의 경계
+
+같은 *NAT/방화벽 뒤 도달* 문제를 페이지별로 나눠 다룹니다.
+
+<KV>
+  <KVItem term="ip-routing"><strong>NAT 자체 메커니즘</strong>(L3 변환) + P2P NAT traversal (STUN/TURN/ICE) hole-punching.</KVItem>
+  <KVItem term="VPN"><strong>양방향 site-to-site / remote-access</strong> 암호화 터널 (IPsec·WireGuard·OpenVPN). 본 페이지는 *outbound only* 비대칭 우회.</KVItem>
+  <KVItem term="Inbound · Outbound"><strong>방향성 멘탈 모델</strong>·기본 정책(default deny inbound). 본 페이지는 그 비대칭을 *어떻게 활용*하는지.</KVItem>
+  <KVItem term="OAuth · OIDC"><strong>Identity layer</strong>·SSO·mTLS·ZTNA 운영 세부.</KVItem>
+  <KVItem term="K8s 네트워킹"><strong>클러스터 내부</strong> egress·ingress·NetworkPolicy. 본 페이지의 패턴이 클러스터-외부 트래픽에 어떻게 적용되는지.</KVItem>
+</KV>

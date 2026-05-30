@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>네트워크 & 보안 시각화 · net·viz</title>
+  <meta name="description" content="네트워크의 계층, 프로토콜, 보안을 인터랙티브하게 따라가는 시각화 가이드." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="index.html">net·viz</a></div>
+      <nav>
+        <a href="index.html">홈</a>
+        <a href="pages/layers.html">계층</a>
+        <a href="pages/arp.html">ARP</a>
+        <a href="pages/ip-routing.html">IP·라우팅</a>
+        <a href="pages/tcp-udp.html">TCP·UDP</a>
+        <a href="pages/dns.html">DNS</a>
+        <a href="pages/http.html">HTTP</a>
+        <a href="pages/tls.html">TLS</a>
+        <a href="pages/security.html">보안</a>
+        <a href="pages/advanced/bgp.html">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> Interactive · Network Field Guide</span>
+      <h1>
+        네트워크의 동작 원리와<br/>
+        보안을 <span class="accent">그림으로</span> 이해하기
+      </h1>
+      <p class="lead">
+        각 프로토콜이 어떻게 동작하는지, 어떤 문제를 풀기에 적합하고
+        어떤 상황에서 약점을 드러내는지를 흐름 애니메이션과 비교로 정리했습니다.
+        클릭 한 번으로 패킷이 어떻게 움직이는지 직접 따라가 보세요.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">01 — Foundations</span>
+      <h2>주소가 정해지고, 신뢰가 만들어지기 전까지</h2>
+      <p>처음이라면 <strong>계층 모델</strong>부터, 익숙하다면 관심 있는 프로토콜로 바로 이동하세요.</p>
+    </section>
+
+    <section class="bento reveal stagger" style="margin-top:18px;">
+      <a href="pages/layers.html" class="card hero-card spot b-span-4 b-row-2" style="text-decoration:none;">
+        <span class="ord">01 · Foundation</span>
+        <h3>OSI 7계층 · TCP/IP 4계층</h3>
+        <p>
+          계층 모델은 거리·매체·신뢰성·의미가 뒤섞인 문제를 잘라낸다. 어떤 책임이 어디에 있는지가 보이면,
+          나머지 프로토콜이 "왜 그렇게 생겼는지"가 설명된다.
+        </p>
+        <div class="tags">
+          <span class="tag">기초</span>
+          <span class="tag">캡슐화</span>
+          <span class="tag">PDU</span>
+          <span class="tag accent">처음이라면 여기부터</span>
+        </div>
+        <span class="card-link">계층 모델 보기</span>
+      </a>
+
+      <a href="pages/arp.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">02 · L2</span>
+        <h3>ARP — IP → MAC</h3>
+        <p>같은 링크에서 상대를 찾는 방법. 단순한 만큼 인증이 없다.</p>
+        <div class="tags">
+          <span class="tag good">단순·빠름</span>
+          <span class="tag bad">인증 없음</span>
+        </div>
+      </a>
+
+      <a href="pages/ip-routing.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">03 · L3</span>
+        <h3>IP & 라우팅</h3>
+        <p>주소 체계, 서브넷, 다음 홉. 인터넷이 그물망으로 동작하는 방식.</p>
+        <div class="tags">
+          <span class="tag">라우팅</span>
+          <span class="tag">CIDR</span>
+        </div>
+      </a>
+
+      <a href="pages/tcp-udp.html#tcp" class="card spot b-span-3" style="text-decoration:none;">
+        <span class="ord">04 · L4</span>
+        <h3>TCP — 연결·순서·재전송</h3>
+        <p>
+          3-way handshake, 흐름·혼잡 제어, 재전송. 한 바이트도 잃지 말아야 하는
+          거의 모든 통신의 기본.
+        </p>
+        <div class="tags">
+          <span class="tag good">신뢰성</span>
+          <span class="tag good">순서 보장</span>
+          <span class="tag bad">RTT 부담</span>
+        </div>
+      </a>
+
+      <a href="pages/tcp-udp.html#udp" class="card spot b-span-3" style="text-decoration:none;">
+        <span class="ord">05 · L4</span>
+        <h3>UDP — 짧고 단순한 데이터그램</h3>
+        <p>
+          핸드셰이크·재전송이 없어 빠르지만, 손실·순서·혼잡은 직접 다뤄야 한다.
+          QUIC이 그 위에 새 전송을 얹은 이유.
+        </p>
+        <div class="tags">
+          <span class="tag good">저지연</span>
+          <span class="tag good">단순</span>
+          <span class="tag bad">손실 가능</span>
+        </div>
+      </a>
+    </section>
+
+    <section class="section reveal" style="margin-top:56px;">
+      <span class="tag-label">02 — Application & Trust</span>
+      <h2>사람이 직접 쓰는 프로토콜, 그리고 신뢰의 채널</h2>
+      <p>이름이 깨지면 인터넷이 멈춘 것처럼 보인다. 채널이 깨지면 더 위험하다.</p>
+    </section>
+
+    <section class="bento reveal stagger" style="margin-top:18px;">
+      <a href="pages/dns.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">06 · L7</span>
+        <h3>DNS — 이름을 주소로</h3>
+        <p>재귀·반복 질의, 캐시 TTL. 이름이 깨지면 인터넷이 멈춘 것처럼 보인다.</p>
+        <div class="tags">
+          <span class="tag">UDP/53</span>
+          <span class="tag warn">캐시 의존</span>
+        </div>
+      </a>
+
+      <a href="pages/http.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">07 · L7</span>
+        <h3>HTTP/1.1 · 2 · 3</h3>
+        <p>요청/응답 모델, 멀티플렉싱, QUIC. 버전마다 푸는 문제가 다르다.</p>
+        <div class="tags">
+          <span class="tag">바이너리화</span>
+          <span class="tag">멀티플렉싱</span>
+        </div>
+      </a>
+
+      <a href="pages/tls.html" class="card hero-card spot b-span-2 b-row-2" style="text-decoration:none;">
+        <span class="ord">08 · Trust</span>
+        <h3>TLS — 안전한 채널</h3>
+        <p>
+          핸드셰이크로 키 교환 후 대칭키 암호화. 인증서로 신원도 함께 검증한다.
+          도청·위변조·사칭을 동시에 푸는 한 묶음의 해법.
+        </p>
+        <div class="tags">
+          <span class="tag good">기밀성</span>
+          <span class="tag good">무결성</span>
+          <span class="tag good">신원</span>
+          <span class="tag accent">PFS</span>
+        </div>
+        <span class="card-link">TLS 핸드셰이크 따라가기</span>
+      </a>
+
+      <a href="pages/security.html" class="card spot b-span-4" style="text-decoration:none;">
+        <span class="ord">09 · Attack & Defense</span>
+        <h3>공격 시나리오와 심층 방어</h3>
+        <p>
+          MITM, ARP 스푸핑, DNS 캐시 포이즈닝, SYN flood, 반사·증폭 DDoS.
+          한 줄의 방어가 무너져도 전체가 무너지지 않는 구조를 만드는 법.
+        </p>
+        <div class="tags">
+          <span class="tag bad">L2~L7 전 영역</span>
+          <span class="tag good">심층 방어</span>
+          <span class="tag accent">Zero Trust</span>
+        </div>
+        <span class="card-link">공격과 방어 시각화</span>
+      </a>
+    </section>
+
+    <section class="section reveal" id="advanced" style="margin-top:72px;">
+      <span class="tag-label">03 — Advanced</span>
+      <h2>한 단계 더 — 인터넷이 <span style="color:var(--fg);">실제로</span> 어떻게 동작하는가</h2>
+      <p>기초가 익숙해진 뒤 읽기 좋은 주제들. 실무에서 자주 부딪치는 한계와 그것을 푸는 도구들.</p>
+    </section>
+
+    <section class="bento reveal stagger" style="margin-top:18px;">
+      <a href="pages/advanced/bgp.html" class="card hero-card spot b-span-4 b-row-2" style="text-decoration:none;">
+        <span class="ord">10 · Inter-Domain</span>
+        <h3>BGP — 인터넷이라는 그물망의 안내자</h3>
+        <p>
+          AS(자율 시스템) 사이의 라우팅. peering·transit·정책 기반 경로 선택과,
+          BGP 하이재킹·RPKI·MANRS가 어떻게 그 신뢰의 그물을 보강하는지.
+        </p>
+        <div class="tags">
+          <span class="tag">AS</span>
+          <span class="tag">eBGP·iBGP</span>
+          <span class="tag accent">정책 라우팅</span>
+          <span class="tag bad">하이재킹 위험</span>
+        </div>
+        <span class="card-link">BGP 따라가기</span>
+      </a>
+
+      <a href="pages/advanced/cdn-lb.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">11 · Edge</span>
+        <h3>CDN · Anycast · LB</h3>
+        <p>가장 가까운 엣지로 보내는 두 가지 방법, 그리고 L4/L7 로드밸런싱.</p>
+        <div class="tags">
+          <span class="tag">Anycast</span>
+          <span class="tag">Consistent Hash</span>
+        </div>
+      </a>
+
+      <a href="pages/advanced/quic.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">12 · Transport+</span>
+        <h3>QUIC & 혼잡 제어</h3>
+        <p>Connection migration, 0-RTT, Reno·Cubic·BBR. 더 빠른 인터넷의 비결.</p>
+        <div class="tags">
+          <span class="tag">QUIC</span>
+          <span class="tag">BBR</span>
+        </div>
+      </a>
+
+      <a href="pages/advanced/vpn.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">13 · Tunnels</span>
+        <h3>VPN — IPsec · WireGuard · Tor</h3>
+        <p>패킷을 다른 패킷 안에 넣는 기술. 그리고 신원을 가리는 방식.</p>
+        <div class="tags">
+          <span class="tag">캡슐화</span>
+          <span class="tag accent">WireGuard</span>
+        </div>
+      </a>
+
+      <a href="pages/advanced/auth.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">14 · Identity</span>
+        <h3>OAuth · OIDC · JWT · mTLS</h3>
+        <p>"누구냐, 무엇을 할 수 있느냐"를 비밀번호 없이 위임하는 법.</p>
+        <div class="tags">
+          <span class="tag">OIDC</span>
+          <span class="tag">PKCE</span>
+          <span class="tag accent">Zero Trust</span>
+        </div>
+      </a>
+
+      <a href="pages/advanced/observability.html" class="card spot b-span-2" style="text-decoration:none;">
+        <span class="ord">15 · Visibility</span>
+        <h3>관측 — tcpdump · eBPF · Mesh</h3>
+        <p>보이지 않으면 막을 수 없다. 계층별 가시성 도구의 지도.</p>
+        <div class="tags">
+          <span class="tag">Wireshark</span>
+          <span class="tag">eBPF</span>
+          <span class="tag">Istio</span>
+        </div>
+      </a>
+    </section>
+
+    <section class="section reveal" style="margin-top:72px;">
+      <h2 style="font-size:22px;">읽는 순서 (추천)</h2>
+      <ol class="steps" style="max-width:760px;">
+        <li><a href="pages/layers.html">계층 모델</a> — 책임의 지도</li>
+        <li><a href="pages/arp.html">ARP</a> → <a href="pages/ip-routing.html">IP·라우팅</a> — 주소가 정해지는 두 단계</li>
+        <li><a href="pages/tcp-udp.html">TCP·UDP</a> — 신뢰성과 속도 사이의 트레이드오프</li>
+        <li><a href="pages/dns.html">DNS</a> → <a href="pages/http.html">HTTP</a> → <a href="pages/tls.html">TLS</a> — 사람이 쓰는 프로토콜</li>
+        <li><a href="pages/security.html">보안</a> — 그 모든 약점이 어디서 터지는가</li>
+        <li><a href="pages/advanced/bgp.html">심화</a> — 인터넷이 실제로 동작하는 메커니즘</li>
+      </ol>
+    </section>
+
+    <p class="foot">직접 버튼을 눌러 패킷을 흘려 보세요. 모든 시각화는 정적 파일만으로 동작합니다.</p>
+  </main>
+
+  <script src="js/common.js"></script>
+</body>
+</html>

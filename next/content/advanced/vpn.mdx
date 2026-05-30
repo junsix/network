@@ -1,0 +1,179 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { MetricRow, Metric } from "@/components/ui/Metric";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "13 · Encrypted Tunnels",
+  title: "VPN",
+  subtitle: (
+    <>
+      <Accent>다른 네트워크</Accent>를 내 네트워크처럼
+    </>
+  ),
+  lead: (
+    <>
+      VPN의 본질은 두 가지입니다: <strong>암호화</strong>로 도청을 막고,
+      <strong> 캡슐화(터널링)</strong>로 마치 두 끝점이 같은 네트워크에 붙어 있는 것처럼 만들기.
+      프로토콜이 여럿인 이유는 누가, 어느 계층에서, 어떤 트레이드오프로 그 두 가지를 푸는지가 다르기 때문입니다.
+    </>
+  ),
+};
+
+<Eyebrow>캡슐화</Eyebrow>
+
+## 패킷을 다른 패킷 안에 넣기
+
+원본 IP 패킷을 통째로 암호화한 뒤, 새로운 "운반용" IP 헤더를 붙여 인터넷을 가로지릅니다.
+도착해서 헤더를 벗기고 복호화하면 원본이 되살아납니다. 이 과정에서 원본의 출발지·도착지조차 외부에는 보이지 않습니다.
+
+<Diagram>
+  <svg viewBox="0 0 900 220" role="img" aria-label="VPN 캡슐화">
+    <g fontFamily="JetBrains Mono" fontSize="12">
+      <text x="20" y="36" fill="#8A8F98">원본 패킷</text>
+      <rect x="20" y="46" width="70" height="34" rx="6" fill="#4a3514" stroke="#F4B942" strokeOpacity="0.5"/>
+      <text x="55" y="68" textAnchor="middle" fill="#EDEDEF">IP</text>
+      <rect x="92" y="46" width="70" height="34" rx="6" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+      <text x="127" y="68" textAnchor="middle" fill="#EDEDEF">TCP</text>
+      <rect x="164" y="46" width="160" height="34" rx="6" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+      <text x="244" y="68" textAnchor="middle" fill="#EDEDEF">Payload (평문)</text>
+      <defs>
+        <marker id="aV" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5E6AD2"/>
+        </marker>
+      </defs>
+      <line x1="450" y1="64" x2="540" y2="64" stroke="#5E6AD2" strokeWidth="2" markerEnd="url(#aV)"/>
+      <text x="460" y="56" fill="#8A8F98">암호화 + 캡슐화</text>
+      <text x="560" y="36" fill="#8A8F98">VPN 패킷 (인터넷에서 보이는 모습)</text>
+      <rect x="560" y="46" width="80" height="34" rx="6" fill="#4a2030" stroke="#F1657A" strokeOpacity="0.5"/>
+      <text x="600" y="68" textAnchor="middle" fill="#EDEDEF">New IP</text>
+      <rect x="642" y="46" width="80" height="34" rx="6" fill="#3a2a5e" stroke="#9B7BFF" strokeOpacity="0.5"/>
+      <text x="682" y="68" textAnchor="middle" fill="#EDEDEF">ESP/UDP</text>
+      <rect x="724" y="46" width="156" height="34" rx="6" fill="#0a0a0c" stroke="#5E6AD2" strokeOpacity="0.6"/>
+      <text x="802" y="68" textAnchor="middle" fill="#BFC6F0">{"{원본 + Payload}"}</text>
+      <text x="724" y="98" fill="#8A8F98" fontSize="11">↑ 전체 암호화</text>
+      <text x="20" y="155" fill="#8A8F98">엿보는 사람이 볼 수 있는 것: New IP의 출발지·도착지, 패킷 크기, 타이밍.</text>
+      <text x="20" y="180" fill="#8A8F98">볼 수 없는 것: 원본 출발지·도착지, 포트, 페이로드.</text>
+    </g>
+  </svg>
+</Diagram>
+
+<Eyebrow>사용 모델</Eyebrow>
+
+## 두 가지 배포
+
+<PCBox>
+  <PC tone="good" title="Site-to-Site">
+    <ul>
+      <li>두 사무실/데이터센터의 라우터끼리 상시 터널</li>
+      <li>내부망 간 통신을 인터넷 우회로 안전하게</li>
+      <li>주로 IPsec tunnel mode</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="Remote Access (Client VPN)">
+    <ul>
+      <li>개인 단말에서 사내망으로</li>
+      <li>WireGuard, OpenVPN, Cisco AnyConnect 등</li>
+      <li>요즘은 Zero Trust로 대체되는 추세 (각 앱이 인증)</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>IPsec</Eyebrow>
+
+## 전통의 표준
+
+IPsec은 단일 프로토콜이 아니라 모음입니다.
+
+<KV>
+  <KVItem term="IKE (v2)">키 교환·인증·정책 협상. UDP/500, NAT 통과 시 UDP/4500.</KVItem>
+  <KVItem term="ESP">실제 데이터 보호. 암호화 + 무결성 (요즘은 AES-GCM 같은 AEAD).</KVItem>
+  <KVItem term="AH">무결성만 (암호화 없음). 거의 안 씀.</KVItem>
+  <KVItem term="Transport mode">원본 IP 헤더 유지, payload만 보호. 호스트-호스트.</KVItem>
+  <KVItem term="Tunnel mode">원본 IP까지 통째로 캡슐화. 게이트웨이-게이트웨이.</KVItem>
+</KV>
+
+<Callout>
+  IPsec은 강력하지만 구성이 복잡하고 옵션이 매우 많아 오설정이 잦습니다.
+  NAT·방화벽과의 상호작용도 까다롭습니다 (그래서 NAT-T가 별도 표준으로 등장).
+</Callout>
+
+<Eyebrow>WireGuard</Eyebrow>
+
+## 현대적 단순함
+
+WireGuard는 "필요한 것만 남기자"는 철학으로 다시 짠 VPN입니다.
+암호 스위트는 단 하나로, Curve25519(키 교환), ChaCha20-Poly1305(AEAD), BLAKE2(해시), SipHash(테이블)를 씁니다.
+커널 코드 약 4,000줄로 IPsec의 수십만 줄 대비 감사할 수 있는 규모입니다.
+
+<MetricRow>
+  <Metric value="~4K" label="커널 코드 라인" />
+  <Metric value="1" label="암호 스위트" />
+  <Metric value="UDP only" label="전송" accent />
+  <Metric value="stateless" label="서버 메모리 부담" />
+</MetricRow>
+
+```ini
+[Interface]
+PrivateKey = aBcDeF...
+Address    = 10.0.0.2/32
+
+[Peer]
+PublicKey  = 1234ABCD...
+AllowedIPs = 10.0.0.0/24
+Endpoint   = vpn.example.com:51820
+PersistentKeepalive = 25
+```
+
+설정이 이 정도로 끝납니다. 키 교환은 노이즈(Noise) 프로토콜 프레임워크를 따릅니다.
+
+<Eyebrow>비교</Eyebrow>
+
+## 한눈에
+
+<DataTable>
+  <thead><tr><th></th><th>IPsec</th><th>WireGuard</th><th>OpenVPN</th></tr></thead>
+  <tbody>
+    <tr><td>전송</td><td>IP 위 ESP (또는 UDP)</td><td>UDP</td><td>TCP 또는 UDP</td></tr>
+    <tr><td>위치</td><td>커널</td><td>커널 (Linux 5.6+)</td><td>유저스페이스</td></tr>
+    <tr><td>암호 협상</td><td>광범위, 복잡</td><td>고정 단일 스위트</td><td>TLS 기반</td></tr>
+    <tr><td>성능</td><td>높음 (커널 + AES-NI)</td><td>매우 높음, 저지연</td><td>중간 (유저스페이스 비용)</td></tr>
+    <tr><td>NAT 친화도</td><td>까다로움 (NAT-T 필요)</td><td>좋음</td><td>좋음</td></tr>
+    <tr><td>구성 복잡도</td><td>높음</td><td>낮음</td><td>중간</td></tr>
+    <tr><td>모바일/로밍</td><td>약함 (IKE 재협상)</td><td>좋음 (stateless)</td><td>중간</td></tr>
+    <tr><td>감사 가능성</td><td>어려움 (큰 코드)</td><td>높음 (작은 코드)</td><td>중간</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>Tor</Eyebrow>
+
+## onion routing: 신원 자체를 가리기
+
+VPN은 "내가 어디로 가는지를 ISP에게 가린다"이지만,
+Tor는 한 단계 더 나아가 "도착지도 출발지를 모르게" 합니다.
+패킷을 양파 껍질처럼 세 겹으로 감싸, 각 노드가 자기 다음 노드만 알 수 있도록 전달합니다.
+
+<Steps>
+  <li><strong>Entry (Guard)</strong>: 사용자 IP를 안다. 다음이 어디인지는 모름.</li>
+  <li><strong>Middle</strong>: 사용자도, 도착지도 모름. Entry와 Exit만 안다.</li>
+  <li><strong>Exit</strong>: 도착지를 안다. 사용자 IP는 모름. (이 노드가 평문을 본다: HTTPS 필수)</li>
+</Steps>
+
+<Callout tone="bad">
+  Exit 노드는 트래픽을 그대로 인터넷에 내보냅니다. HTTPS가 아니면 도청 가능합니다.
+  또한 글로벌 관찰자가 Entry·Exit 양쪽 트래픽 패턴을 비교하면 (correlation) 익명성이 깨질 수 있습니다.
+</Callout>
+
+<Eyebrow>한계</Eyebrow>
+
+## VPN이 풀지 못하는 것
+
+- **엔드포인트 보안**: 단말이 감염되면 VPN으로 사내망에 침투 경로 제공
+- **지나친 신뢰**: "VPN으로 접속했으니 사내인 척" 가정 → 측면 이동 쉬움 (Zero Trust가 등장한 이유)
+- **DNS 누수**: VPN 활성 중에도 OS가 평소 리졸버에 묻는 경우
+- **운영자 신뢰**: 상용 VPN 사업자는 ISP를 또 다른 ISP로 대체하는 효과: 로그 정책 검증 어려움

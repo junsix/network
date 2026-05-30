@@ -1,0 +1,228 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { MetricRow, Metric } from "@/components/ui/Metric";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "End-to-End",
+  title: "주소창 → 화면",
+  subtitle: (
+    <>
+      <Accent>www.google.com</Accent>을 치면 무슨 일이 일어나나
+    </>
+  ),
+  lead: (
+    <>
+      인프라 면접에서 가장 자주 묻는 한 질문. 좋은 답은 단계마다 어느 계층·프로토콜이 일하는지를 짚고,
+      각 단계의 <strong>실패 모드</strong>와 <strong>지연 비용</strong>까지 같이 말합니다.
+      기본 흐름이 처음이라면 <a href="/docs/layers">계층 모델</a> · <a href="/docs/dns">DNS</a> · <a href="/docs/http">HTTP</a> · <a href="/docs/tls">TLS</a> 네 페이지를 먼저 둘러보세요.
+      이 페이지는 그 위에서 <strong>시니어 인터뷰 깊이</strong>로 13단계를 통합합니다.
+    </>
+  ),
+};
+
+<Eyebrow>전체 그림</Eyebrow>
+
+## 13단계: 키보드부터 첫 페인트까지
+
+<Steps>
+  <li><strong>입력 정규화</strong>: 브라우저가 "google.com"을 URL로 해석: 스킴 유추(<code>https://</code>), 검색 vs URL 분기.</li>
+  <li><strong>HSTS preload 확인</strong>: 내장 목록에서 <code>google.com</code>이 보임 → <strong>처음부터 HTTPS 강제</strong>. HTTP 시도 안 함.</li>
+  <li><strong>DNS 조회</strong>: in-browser → OS 캐시 → /etc/hosts → 외부 리졸버 → 권한 서버. A/AAAA + HTTPS RR 동시 조회.</li>
+  <li><strong>Happy Eyeballs</strong>: v6와 v4를 거의 동시에 TCP/QUIC 시작. 빠른 쪽 채택.</li>
+  <li><strong>QUIC/TCP 연결</strong>: Alt-Svc 캐시에 h3가 있으면 UDP/443 QUIC 시도. 없으면 TCP 3-way handshake.</li>
+  <li><strong>TLS 핸드셰이크</strong> (TCP의 경우): ClientHello → ServerHello + Cert + Finished → Client Finished. ALPN으로 h2/h3 협상, 세션 재개면 0-RTT.</li>
+  <li><strong>인증서 검증</strong>: 체인 → CT 확인 → OCSP staple 확인 → SAN 매치.</li>
+  <li><strong>HTTP 요청</strong>: <code>GET /</code> + 헤더(쿠키, Accept, Sec-CH-UA, …)</li>
+  <li><strong>엣지 처리</strong>: Anycast로 가장 가까운 GFE에 도착. WAF·rate limit·인증 검증.</li>
+  <li><strong>오리진 라우팅</strong>: 엣지가 캐시 미스면 L7 LB → 백엔드. 5-tuple 해시·consistent hashing.</li>
+  <li><strong>백엔드 처리</strong>: 분산 시스템(검색 인덱스 샤드들)에 fanout → 결과 머지. 트레이스 ID 전파.</li>
+  <li><strong>응답 + 본문 스트리밍</strong>: 헤더 먼저(<code>103 Early Hints</code>로 프리로드 힌트), 본문은 청크/QUIC 스트림.</li>
+  <li><strong>브라우저 렌더</strong>: HTML 파싱 → 서브리소스 fetch(CSS/JS) → 레이아웃 → 페인트. <strong>여기까지 보통 200~800ms</strong>.</li>
+</Steps>
+
+<Eyebrow>지연 예산</Eyebrow>
+
+## 어디서 시간이 사라지나
+
+데스크탑·서울→Mountain View, 모든 단계 정상 가정.
+
+<MetricRow>
+  <Metric value="~3ms" label="DNS 캐시 hit" />
+  <Metric value="~30ms" label="DNS cold (KR resolver)" />
+  <Metric value="~140ms" label="대륙간 RTT" />
+  <Metric value="~280ms" label="TCP + TLS cold" accent />
+  <Metric value="~140ms" label="QUIC 0-RTT" accent />
+  <Metric value="~800ms" label="First Contentful Paint 목표" />
+</MetricRow>
+
+<Callout>
+  대륙간 RTT 140ms × <strong>왕복 횟수</strong>가 사용자 체감의 진짜 적입니다.
+  TCP 3-way(1.5 RTT) + TLS(1 RTT) + HTTP(1 RTT) = 3.5 RTT ≒ 500ms 손실.
+  QUIC 0-RTT가 이걸 1 RTT로 줄이는 게 왜 큰일인지: 단순한 산수에서 답이 나옵니다.
+</Callout>
+
+<Eyebrow>1. 입력 단계</Eyebrow>
+
+## 브라우저 주소창의 사전 처리
+
+```
+google.com           → URL 후보로 인지
+"google docs"        → 공백 있음 → 검색 쿼리로 처리
+192.168.1.1          → IP 리터럴 → http://192.168.1.1
+javascript:alert(1)  → 스킴 차단 (보안)
+```
+
+스킴 없으면 일반적으로 <code>https://</code> 시도. **HSTS preload 목록**(Chromium 소스 트리에 박혀 있음)에 도메인이 있으면 HTTP 시도 자체를 안 함: 첫 방문도 다운그레이드 안전.
+
+<Eyebrow>2. DNS 단계</Eyebrow>
+
+## 캐시의 6단 캐스케이드
+
+<Steps>
+  <li>브라우저 메모리 캐시(~1분)</li>
+  <li>OS 리졸버 캐시(systemd-resolved, mDNSResponder…)</li>
+  <li><code>/etc/hosts</code> 정적 매핑</li>
+  <li>nsswitch.conf 정책(보통 <code>files dns</code>)</li>
+  <li>외부 리졸버(/etc/resolv.conf: ISP 또는 1.1.1.1·8.8.8.8)</li>
+  <li>리졸버가 미스면 root → TLD → 권한 서버 반복 질의</li>
+</Steps>
+
+<Callout tone="bad">
+  K8s 환경에선 <code>ndots:5</code>와 search 도메인 5~6개 때문에 외부 도메인 한 번 풀려고 N+1번 질의가 일어남.
+  완화: FQDN 사용(<code>www.google.com.</code> 끝의 점), 또는 <strong>NodeLocal DNSCache</strong> 배포.
+</Callout>
+
+DNS over HTTPS(DoH)를 쓰면 외부 리졸버 통신이 TLS로 감춰지지만, **첫 DoH 서버 자체의 IP는 부트스트랩으로 평문 DNS로 풀어야** 하는 닭-달걀 문제가 있음.
+
+<Eyebrow>3. 연결 단계</Eyebrow>
+
+## TCP vs QUIC 선택의 결정 트리
+
+```
+1. 이 도메인의 Alt-Svc 캐시 항목 있나?
+   YES → h3 시도 (UDP/443)
+   NO  → TCP/443으로 핸드셰이크
+2. TCP가 SYN+ACK 받았나?
+   YES → TLS 핸드셰이크 시작
+   NO (RTO 만료) → 재전송, 지수 백오프
+3. QUIC 시도가 racing 중이면 첫 ack 받은 쪽으로 결정
+```
+
+**Alt-Svc 헤더**(<code>Alt-Svc: h3=":443"; ma=86400</code>)가 핵심. 한 번 받으면 다음 방문부터 바로 QUIC.
+
+<Eyebrow>4. TLS 단계</Eyebrow>
+
+## 핸드셰이크에서 일어나는 검증 6가지
+
+<KV>
+  <KVItem term="체인">leaf → intermediate → root까지 서명 검증. root는 OS 신뢰 저장소.</KVItem>
+  <KVItem term="유효 기간"><code>notBefore</code> ≤ 현재 시각 ≤ <code>notAfter</code>. NTP가 안 맞으면 false-positive 발생.</KVItem>
+  <KVItem term="도메인 매치">SAN 또는 CN에 정확히 매치 (와일드카드 한 단만).</KVItem>
+  <KVItem term="폐기">OCSP staple 확인 (없으면 must-staple이면 거부, 아니면 통과: 보통).</KVItem>
+  <KVItem term="CT">SCT가 인증서나 OCSP에 박혀 있고 알려진 CT 로그 서명. 없으면 거부.</KVItem>
+  <KVItem term="키 사용">extendedKeyUsage에 serverAuth 있어야 함.</KVItem>
+</KV>
+
+이게 모두 통과해야 ECDHE 키 합의 → 세션 키 도출 → ApplicationData 단계로 진입.
+
+<Eyebrow>5. 엣지 도착</Eyebrow>
+
+## CDN의 첫 5밀리초
+
+요청이 도착한 엣지 POP에서:
+
+<Steps>
+  <li>DDoS 1차 필터(SYN cookie, rate limit, 알려진 봇 차단)</li>
+  <li>TLS termination: 세션 키로 복호화</li>
+  <li>WAF: 시그니처/룰 기반 페이로드 검사</li>
+  <li>캐시 키 계산: 보통 URL + Vary 헤더들의 정규화</li>
+  <li>캐시 hit → 즉시 응답 (대륙간 왕복 없이 끝)</li>
+  <li>캐시 miss → origin shield → origin (request coalescing으로 동일 미스 합침)</li>
+</Steps>
+
+<Callout tone="good">
+  Cloudflare/Fastly/Akamai는 거의 모든 정적 자원을 90%+ 캐시 hit ratio로 처리.
+  Origin이 보는 트래픽은 사용자 트래픽의 10% 미만.
+</Callout>
+
+<Eyebrow>6. 백엔드</Eyebrow>
+
+## L7 LB에서 검색 결과까지
+
+엣지가 origin을 호출하면:
+
+<Steps>
+  <li>리전 라우팅: Anycast가 가장 가까운 데이터센터로</li>
+  <li>L4 LB(예: Maglev): VIP에 도착한 연결을 백엔드 풀에 consistent hash</li>
+  <li>L7 LB(예: Envoy): TLS termination(또는 mTLS), URL/헤더 기반 분기, 재시도·서킷브레이커</li>
+  <li>서비스 메시 사이드카: mTLS 검증, 트래픽 정책, 트레이스 ID 부착</li>
+  <li>애플리케이션: 검색 인덱스 샤드들에 fanout, 결과 머지</li>
+  <li>응답: 같은 경로 역방향, 헤더 압축·압축(brotli)·청크 전송</li>
+</Steps>
+
+<Eyebrow>7. 렌더링</Eyebrow>
+
+## 첫 페인트까지: 네트워크 외 영역
+
+응답 본문이 도착해도 화면은 곧장 뜨지 않음. 브라우저가 추가로:
+
+<Steps>
+  <li>HTML 파싱: 토큰화 → DOM 트리</li>
+  <li>서브리소스 발견: CSS, JS, 이미지. <code>preload</code>/<code>preconnect</code> 힌트가 큰 차이</li>
+  <li>CSS 파싱: CSSOM 트리</li>
+  <li>레이아웃: DOM × CSSOM = 박스 트리</li>
+  <li>페인트: 픽셀화</li>
+  <li>컴포지트: GPU에 전달</li>
+</Steps>
+
+핵심 지표:
+- **TTFB (Time to First Byte)**: 네트워크 + 백엔드 처리 합계
+- **FCP (First Contentful Paint)**: 첫 텍스트/이미지
+- **LCP (Largest Contentful Paint)**: 메인 콘텐츠: Google이 검색 랭킹에 사용
+- **CLS (Cumulative Layout Shift)**: 늦게 로드된 요소가 레이아웃을 흔드는 양
+
+<Eyebrow>실패 시나리오</Eyebrow>
+
+## 단계별 흔한 문제
+
+<DataTable>
+  <thead><tr><th>단계</th><th>실패</th><th>증상</th><th>진단</th></tr></thead>
+  <tbody>
+    <tr><td>DNS</td><td>리졸버 장애</td><td>"서버를 찾을 수 없음"</td><td><code>dig @8.8.8.8 example.com</code></td></tr>
+    <tr><td>DNS</td><td>TTL 너무 김 + 마이그레이션</td><td>일부 사용자만 옛 IP로 감</td><td>여러 리졸버에서 dig 비교</td></tr>
+    <tr><td>TCP</td><td>SYN drop (방화벽)</td><td>커넥션 타임아웃</td><td>traceroute · tcpdump SYN</td></tr>
+    <tr><td>TCP</td><td>MTU 블랙홀</td><td>핸드셰이크 OK, 데이터 멈춤</td><td>큰 ping에 DF, MSS clamping</td></tr>
+    <tr><td>TLS</td><td>인증서 만료</td><td>NET::ERR_CERT_DATE_INVALID</td><td>openssl s_client 출력 확인</td></tr>
+    <tr><td>TLS</td><td>중간 체인 누락</td><td>일부 클라이언트만 실패 (캐시된 OS에선 OK)</td><td>SSL Labs 또는 openssl -showcerts</td></tr>
+    <tr><td>HTTP</td><td>502/503</td><td>엣지·LB는 OK, origin이 문제</td><td>백엔드 헬스체크·로그</td></tr>
+    <tr><td>HTTP</td><td>504</td><td>엣지가 origin 응답을 기다리다 타임아웃</td><td>오리진 p99·트레이스</td></tr>
+    <tr><td>캐싱</td><td>Vary가 너무 많음</td><td>캐시 hit ratio 0%, origin 부하 ↑</td><td>CDN 분석</td></tr>
+    <tr><td>응답</td><td>chunked encoding 오류</td><td>본문이 끊겨서 도착</td><td>curl -v · Wireshark</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>면접 응용</Eyebrow>
+
+## 이 흐름에서 파생되는 질문들
+
+면접관이 이 답을 듣고 던지는 후속 질문 모음:
+
+- "DNS TTL을 짧게 하면 페일오버는 빨라지지만 트래픽은 늘어난다. 트레이드오프를 어떻게 잡나?"
+- "HSTS preload는 어떻게 등록하나? 등록 후에 도메인을 팔면?"
+- "TLS 1.3 0-RTT의 replay 위험은? 어떤 요청만 0-RTT로 보내야 하나?"
+- "Anycast로 같은 IP가 여러 곳에서 광고될 때, 진행 중인 TCP 연결이 끊기지 않는 이유는?"
+- "CDN 캐시 키 설계에서 Vary 헤더를 잘못 쓰면 어떤 일이 일어나나?"
+- "엣지에서 origin으로 가는 connection pool은 어떤 알고리즘으로 관리하나?"
+- "검색 결과 머지에서 한 샤드가 느리면 전체 응답이 느려진다. hedged request·tail tolerance를 어떻게 구현하나?"
+- "TTFB가 갑자기 늘었다. DNS·TCP·TLS·HTTP·백엔드 중 어디인지 어떻게 좁히나?"
+- "사용자는 느리다고 하는데 모니터링은 정상이라면? gray failure 추적 방법은?"
+
+<Callout tone="good">
+  이 페이지를 외울 게 아니라, <strong>"답을 단계 → 실패 → 지연 비용 → 운영 트레이드오프"</strong> 네 박자로 풀어내는 패턴을 익히는 게 핵심.
+  같은 패턴으로 "이메일 보내면 무슨 일?", "git push 하면?" 같은 질문도 답할 수 있게 됩니다.
+</Callout>

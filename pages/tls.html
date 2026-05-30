@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TLS · net·viz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="../index.html">net·viz</a></div>
+      <nav>
+        <a href="../index.html">홈</a>
+        <a href="layers.html">계층</a>
+        <a href="arp.html">ARP</a>
+        <a href="ip-routing.html">IP·라우팅</a>
+        <a href="tcp-udp.html">TCP·UDP</a>
+        <a href="dns.html">DNS</a>
+        <a href="http.html">HTTP</a>
+        <a href="tls.html">TLS</a>
+        <a href="security.html">보안</a>
+        <a href="advanced/bgp.html">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> 08 · Trust</span>
+      <h1>TLS — 도청 가능한 인터넷에서 <span class="accent">안전한 채널</span> 만들기</h1>
+      <p class="lead">
+        TLS는 세 가지를 동시에 풀어냅니다: <strong>기밀성</strong>(내용을 못 봄),
+        <strong>무결성</strong>(중간에 못 고침), <strong>인증</strong>(상대가 진짜인지 확인).
+        이 세 가지를 비대칭 키 교환 + 대칭키 암호화 + 인증서 체인으로 엮어 만들어 냅니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">아이디어</span>
+      <h2>핵심 한 줄</h2>
+      <div class="callout good">
+        공개키로 키 교환을 안전하게 협상한 뒤, 실제 데이터는 빠른 대칭키로 암호화한다.
+      </div>
+      <p>
+        공개키 암호는 인증·키 교환에는 강하지만 느립니다. 대칭키는 빠르지만 둘이 같은 키를 가지고 있어야 합니다.
+        TLS 핸드셰이크는 "느린 공개키로 빠른 대칭키를 안전하게 합의"하는 절차입니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">애니메이션</span>
+      <h2>TLS 1.3 핸드셰이크 (1-RTT)</h2>
+
+      <div class="controls">
+        <button class="btn primary" id="tlsRun">▶ TLS 핸드셰이크 시작</button>
+        <button class="btn" id="tlsReset">↺ 초기화</button>
+      </div>
+
+      <div class="diagram" style="padding:18px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:var(--fg-muted);text-align:center;margin-bottom:10px;font-family:var(--font-mono);">
+          <div><span style="color:var(--fg);font-weight:600;">Client</span></div>
+          <div><span style="color:var(--fg);font-weight:600;">Server</span></div>
+        </div>
+        <div class="lane" id="tlsLane">
+          <div class="nodes"><div class="node">Client</div><div class="node">Server</div></div>
+        </div>
+        <div id="tlsLog" style="margin-top:12px;color:var(--fg-muted);font-size:13px;min-height:160px;font-family:var(--font-mono);"></div>
+      </div>
+
+      <ol class="steps">
+        <li><strong>ClientHello</strong>: 지원 가능한 암호 스위트 목록 + 클라이언트 키 공유(KeyShare) + 무작위 값(ClientRandom).</li>
+        <li><strong>ServerHello</strong>: 선택한 암호 스위트 + 서버 KeyShare + ServerRandom.
+          여기서 양쪽은 ECDH(타원곡선 디피-헬만)로 <em>공유 비밀</em>을 계산 가능. 이후 메시지는 이미 암호화된다.</li>
+        <li><strong>Certificate</strong> (암호화됨): 서버 인증서 체인. 클라이언트는 신뢰 루트까지 거슬러 올라가 검증.</li>
+        <li><strong>CertificateVerify</strong>: 서버가 자기 개인키로 서명 → "이 인증서는 정말 내 것이다" 증명.</li>
+        <li><strong>Finished</strong>: 양쪽 모두 핸드셰이크 무결성 확인.</li>
+        <li>이후 모든 애플리케이션 데이터는 합의된 세션 키로 AEAD(AES-GCM 등) 암호화.</li>
+      </ol>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">PFS</span>
+      <h2>왜 디피-헬만(DH)을 쓰나 — 순방향 비밀성</h2>
+      <p>
+        과거 RSA 키 교환에서는 서버 개인키만 알면 과거 트래픽까지 복호화할 수 있었습니다.
+        오늘날에는 매 세션마다 임시 ECDHE 키를 만들어, 세션 종료 후엔 그 키가 사라집니다.
+        <strong>나중에 서버 개인키가 유출돼도 과거 트래픽은 복호화 불가</strong> — 이것이 PFS입니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">신뢰</span>
+      <h2>인증서 체인과 신뢰 모델</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 900 160" role="img" aria-label="인증서 체인">
+          <g font-family="JetBrains Mono" font-size="13">
+            <rect x="20" y="40" width="170" height="60" rx="10" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="105" y="65" text-anchor="middle" fill="#EDEDEF">Root CA</text>
+            <text x="105" y="84" text-anchor="middle" fill="#8A8F98" font-size="11">OS / 브라우저 신뢰 저장소</text>
+
+            <rect x="240" y="40" width="200" height="60" rx="10" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="340" y="65" text-anchor="middle" fill="#EDEDEF">Intermediate CA</text>
+            <text x="340" y="84" text-anchor="middle" fill="#8A8F98" font-size="11">Root가 서명</text>
+
+            <rect x="490" y="40" width="220" height="60" rx="10" fill="#1e4a3a" stroke="#5BD5A0" stroke-opacity="0.5"/>
+            <text x="600" y="65" text-anchor="middle" fill="#EDEDEF">Server (Leaf)</text>
+            <text x="600" y="84" text-anchor="middle" fill="#8A8F98" font-size="11">Intermediate가 서명</text>
+
+            <line x1="190" y1="70" x2="240" y2="70" stroke="#5E6AD2" stroke-width="2" marker-end="url(#aT)"/>
+            <line x1="440" y1="70" x2="490" y2="70" stroke="#5E6AD2" stroke-width="2" marker-end="url(#aT)"/>
+            <defs>
+              <marker id="aT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5E6AD2"/>
+              </marker>
+            </defs>
+            <text x="20" y="135" fill="#8A8F98" font-size="12" font-family="Inter">검증 흐름: Leaf의 서명 → Intermediate 공개키로 검증 → Intermediate는 Root가 서명 → Root는 OS가 이미 신뢰</text>
+          </g>
+        </svg>
+      </div>
+      <p style="margin-top:12px;">
+        브라우저가 신뢰하는 Root CA 목록은 OS와 브라우저에 미리 들어 있습니다.
+        그 사슬이 어디 한 곳이라도 깨지면 (만료, 폐기, 도메인 불일치) 빨간 경고가 뜨는 것이죠.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">한계</span>
+      <h2>강점과 한계</h2>
+      <div class="pcbox">
+        <div class="pc good">
+          <h4>TLS가 보장하는 것</h4>
+          <ul>
+            <li>도청 방지: 중간에 패킷을 봐도 내용은 암호문</li>
+            <li>위변조 탐지: 한 바이트만 바꿔도 AEAD가 깨짐</li>
+            <li>신원 확인: 인증서를 통해 "이 도메인의 진짜 서버"임을 검증</li>
+            <li>순방향 비밀성: 과거 통신을 미래의 키 유출로부터 보호</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <h4>TLS가 보장하지 못하는 것</h4>
+          <ul>
+            <li>경로 자체의 차단/리다이렉션 (그건 ARP·DNS·라우팅 보안의 몫)</li>
+            <li>서버가 신뢰할 만한지 (인증서는 "맞다"는 것만 보장)</li>
+            <li>클라이언트 자체의 무결성 (악성 코드가 깔리면 의미 없음)</li>
+            <li>CA가 잘못 발급한 경우 (Certificate Transparency, HSTS 등으로 보완)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">운영</span>
+      <h2>자주 마주치는 이슈</h2>
+      <table>
+        <thead><tr><th>증상</th><th>흔한 원인</th><th>확인할 곳</th></tr></thead>
+        <tbody>
+          <tr><td>NET::ERR_CERT_DATE_INVALID</td><td>인증서 만료</td><td>갱신 자동화(ACME/Let's Encrypt)</td></tr>
+          <tr><td>도메인 불일치</td><td>SAN/CN 잘못 발급</td><td>인증서 발급 요청서</td></tr>
+          <tr><td>중간 체인 누락</td><td>서버가 leaf만 제공</td><td>fullchain.pem 사용</td></tr>
+          <tr><td>약한 암호 스위트</td><td>구식 OS·라이브러리</td><td>SSL Labs 스캔</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="foot">다음으로 추천: <a href="security.html">보안 — 공격과 방어 시각화 →</a></p>
+  </main>
+
+  <script src="../js/common.js"></script>
+  <script>
+    const lane = document.getElementById("tlsLane");
+    const log = document.getElementById("tlsLog");
+    const append = (m) => { const d = document.createElement("div"); d.textContent = "› " + m; log.appendChild(d); };
+    document.getElementById("tlsReset").onclick = () => { log.innerHTML = ""; lane.querySelectorAll(".pkt").forEach(p => p.remove()); };
+    document.getElementById("tlsRun").onclick = async () => {
+      log.innerHTML = "";
+      append("Client → Server: ClientHello (cipher suites, KeyShare, ClientRandom)");
+      await NetViz.flyPacket(lane, { label: "ClientHello", cls: "syn", duration: 1100 });
+      append("Server → Client: ServerHello + Certificate + CertVerify + Finished");
+      append("(여기서부터 메시지는 이미 키 합의되어 암호화됨)");
+      await NetViz.flyPacket(lane, { label: "ServerHello + Cert + Fin", cls: "syn", duration: 1300, from: "right" });
+      append("Client: 인증서 체인 검증 → 자체 Finished 전송");
+      await NetViz.flyPacket(lane, { label: "Client Finished", cls: "ack", duration: 900 });
+      append("총 1 RTT — 이제 모든 데이터는 AES-GCM 등으로 암호화되어 흐른다.");
+      await NetViz.flyPacket(lane, { label: "Encrypted Application Data", cls: "data", duration: 1000 });
+      await NetViz.flyPacket(lane, { label: "Encrypted Response", cls: "data", duration: 1000, from: "right" });
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "07 · Application",
+  title: "HTTP",
+  subtitle: (
+    <>
+      <Accent>웹의 언어</Accent>, 세 번의 큰 진화
+    </>
+  ),
+  lead: (
+    <>
+      HTTP는 "요청 → 응답" 모델의 단순한 텍스트 프로토콜로 시작해서,
+      성능과 보안의 압력을 받으며 HTTP/2(바이너리 멀티플렉싱), HTTP/3(QUIC 위)로 진화해 왔습니다.
+      각 버전이 "어떤 문제를 풀려고 했는지"를 따라가 보면 설계 의도가 보입니다.
+    </>
+  ),
+};
+
+<Eyebrow>기본 형태</Eyebrow>
+
+## 요청과 응답의 모양
+
+```
+GET /index.html HTTP/1.1
+Host: example.com
+User-Agent: curl/8.4.0
+Accept: */*
+```
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 1256
+Cache-Control: max-age=3600
+
+<!doctype html> ...
+```
+
+첫 줄(요청 라인 또는 상태 라인), 헤더, 빈 줄, 본문. 텍스트라 어떤 도구로도 들여다보기 쉽습니다.
+이 단순함이 HTTP의 성공 비결이지만, 이후 성능 문제의 근원이기도 합니다.
+
+<Eyebrow>동사</Eyebrow>
+
+## 주요 메서드와 의미
+
+<DataTable>
+  <thead><tr><th>메서드</th><th>의미</th><th>안전?</th><th>멱등?</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td>리소스 조회</td><td>예</td><td>예</td></tr>
+    <tr><td>HEAD</td><td>헤더만 조회</td><td>예</td><td>예</td></tr>
+    <tr><td>POST</td><td>새 리소스 생성/명령</td><td>아니오</td><td>아니오</td></tr>
+    <tr><td>PUT</td><td>리소스 통째 교체</td><td>아니오</td><td>예</td></tr>
+    <tr><td>PATCH</td><td>일부 수정</td><td>아니오</td><td>경우에 따라</td></tr>
+    <tr><td>DELETE</td><td>삭제</td><td>아니오</td><td>예</td></tr>
+  </tbody>
+</DataTable>
+
+**안전(safe)**은 서버 상태를 바꾸지 않는다는 뜻, **멱등(idempotent)**은 여러 번 호출해도 결과가 같다는 뜻입니다.
+멱등 여부는 재시도 가능성을 좌우합니다.
+
+<Eyebrow>버전 비교</Eyebrow>
+
+## 무엇을 풀려고 했나
+
+<Diagram>
+  <svg viewBox="0 0 900 260" role="img" aria-label="HTTP 버전 비교">
+    <g fontSize="13" fontFamily="JetBrains Mono">
+      <text x="20" y="22" fill="#8A8F98">HTTP/1.1: 한 연결에 한 요청씩 (직렬)</text>
+      <g transform="translate(20,32)">
+        <rect x="0" y="0" width="160" height="22" rx="4" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <rect x="170" y="0" width="160" height="22" rx="4" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <rect x="340" y="0" width="160" height="22" rx="4" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <text x="80" y="15" textAnchor="middle" fill="#EDEDEF" fontSize="11">REQ A → RES A</text>
+        <text x="250" y="15" textAnchor="middle" fill="#EDEDEF" fontSize="11">REQ B → RES B</text>
+        <text x="420" y="15" textAnchor="middle" fill="#EDEDEF" fontSize="11">REQ C → RES C</text>
+      </g>
+      <text x="20" y="82" fill="#F1657A" fontSize="12">HOL: A가 늦으면 B, C가 기다린다 (또는 별도 연결 필요)</text>
+      <text x="20" y="116" fill="#8A8F98">HTTP/2: 한 TCP 연결 위에서 스트림 멀티플렉싱</text>
+      <g transform="translate(20,126)">
+        <rect x="0" y="0" width="500" height="14" rx="3" fill="#1e4a3a" stroke="#5BD5A0" strokeOpacity="0.5"/>
+        <text x="250" y="11" textAnchor="middle" fill="#EDEDEF" fontSize="10">stream 1: REQ/RES A</text>
+        <rect x="0" y="18" width="500" height="14" rx="3" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.5"/>
+        <text x="250" y="29" textAnchor="middle" fill="#EDEDEF" fontSize="10">stream 3: REQ/RES B</text>
+        <rect x="0" y="36" width="500" height="14" rx="3" fill="#4a3514" stroke="#F4B942" strokeOpacity="0.5"/>
+        <text x="250" y="47" textAnchor="middle" fill="#EDEDEF" fontSize="10">stream 5: REQ/RES C</text>
+      </g>
+      <text x="20" y="196" fill="#F1657A" fontSize="12">하지만 TCP 자체의 패킷 손실이 모든 스트림을 차단 (TCP HOL)</text>
+      <text x="20" y="226" fill="#8A8F98">HTTP/3: QUIC(UDP) 위. 스트림별 독립 → 손실이 다른 스트림에 영향 없음</text>
+      <g transform="translate(20,234)">
+        <rect x="0" y="0" width="500" height="14" rx="3" fill="#2a3070" stroke="#5E6AD2" strokeOpacity="0.7"/>
+        <text x="250" y="11" textAnchor="middle" fill="#EDEDEF" fontSize="10">독립 스트림 · 0-RTT · 연결 마이그레이션</text>
+      </g>
+    </g>
+  </svg>
+</Diagram>
+
+<DataTable>
+  <thead><tr><th></th><th>HTTP/1.1</th><th>HTTP/2</th><th>HTTP/3</th></tr></thead>
+  <tbody>
+    <tr><td>전송</td><td>TCP</td><td>TCP</td><td>QUIC (UDP)</td></tr>
+    <tr><td>인코딩</td><td>텍스트</td><td>바이너리 프레임</td><td>바이너리</td></tr>
+    <tr><td>멀티플렉싱</td><td>없음 (파이프라이닝 사실상 실패)</td><td>스트림 멀티플렉싱</td><td>스트림 단위 손실 격리</td></tr>
+    <tr><td>헤더</td><td>매번 평문 반복</td><td>HPACK 압축</td><td>QPACK 압축</td></tr>
+    <tr><td>핸드셰이크</td><td>TCP 3-way (+TLS)</td><td>동일</td><td>QUIC 1-RTT, 0-RTT 가능</td></tr>
+    <tr><td>주된 문제 해결</td><td>—</td><td>요청 병렬화</td><td>TCP HOL · 모바일 네트워크 변화 대응</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>HTTPS</Eyebrow>
+
+## HTTP 위에 TLS
+
+HTTPS는 별도의 프로토콜이 아닙니다. HTTP를 **TLS** 위에서 전송하는 것뿐입니다.
+그래서 도청·위변조·신원 사칭에서 자유로워지지만, 핸드셰이크 비용과 인증서 운영 부담이 생깁니다.
+
+자세한 TLS 핸드셰이크는 [TLS 페이지](/docs/tls)에서 다룹니다.
+
+<Eyebrow>참조</Eyebrow>
+
+## 상태 코드 빠른 참조
+
+<DataTable>
+  <thead><tr><th>군</th><th>의미</th><th>대표</th></tr></thead>
+  <tbody>
+    <tr><td>1xx</td><td>정보</td><td>100 Continue, 101 Switching Protocols</td></tr>
+    <tr><td>2xx</td><td>성공</td><td>200 OK, 201 Created, 204 No Content</td></tr>
+    <tr><td>3xx</td><td>리다이렉트</td><td>301 영구, 302 임시, 304 Not Modified</td></tr>
+    <tr><td>4xx</td><td>클라이언트 오류</td><td>400, 401 인증 필요, 403 금지, 404, 429 너무 많음</td></tr>
+    <tr><td>5xx</td><td>서버 오류</td><td>500, 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>트레이드오프</Eyebrow>
+
+## 강점과 약점
+
+<PCBox>
+  <PC tone="good" title="HTTP가 잘 어울리는 곳">
+    <ul>
+      <li>요청/응답 모델로 충분한 모든 것 (REST API, 정적·동적 웹)</li>
+      <li>방화벽·CDN·캐시 인프라가 이미 풍부함</li>
+      <li>텍스트 친화로 디버깅·관측이 쉬움</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="HTTP가 어색한 곳">
+    <ul>
+      <li>서버가 먼저 푸시해야 하는 실시간 (해결: WebSocket, SSE, gRPC streaming)</li>
+      <li>지속적·짧은 메시지가 많은 게임 (HTTP의 오버헤드)</li>
+      <li>방화벽/프록시가 HTTP만 통과시키는 환경에서 다른 프로토콜을 쓰고 싶을 때 (HTTP CONNECT, WebSocket, 또는 HTTPS 터널 사용)</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>시니어 디테일</Eyebrow>
+
+## 캐싱: ETag, Vary, stale-while-revalidate
+
+HTTP 캐싱은 단순히 "TTL"이 아닙니다. **freshness** 와 **validation** 두 개의 메커니즘이 있고, 둘이 같이 동작합니다.
+
+### Cache-Control 디렉티브 풀세트
+
+<KV>
+  <KVItem term="max-age=N"><strong>private 캐시</strong>(브라우저)의 freshness. N초간 origin에 안 묻고 그대로 사용.</KVItem>
+  <KVItem term="s-maxage=N"><strong>shared 캐시</strong>(CDN/proxy)에만 적용. 보통 max-age보다 크게: 브라우저는 짧게, 엣지는 길게.</KVItem>
+  <KVItem term="no-cache">매번 검증 필수 (그러나 캐시는 보관). 검증 후 304 받으면 캐시 본문 재사용.</KVItem>
+  <KVItem term="no-store">아예 저장 금지. 민감 데이터(인증·결제) 응답에.</KVItem>
+  <KVItem term="must-revalidate">stale 상태에서는 반드시 origin 검증. 네트워크 끊기면 504 반환.</KVItem>
+  <KVItem term="stale-while-revalidate=N">만료된 응답을 N초간 그대로 주면서 백그라운드에서 갱신. <strong>체감 속도의 핵심.</strong></KVItem>
+  <KVItem term="stale-if-error=N">origin이 5xx 줄 때 N초까지는 만료된 캐시로 응답. 안정성 패턴.</KVItem>
+  <KVItem term="immutable">URL 자체가 버전을 포함(예: <code>app.abc123.js</code>) → 영원히 같은 콘텐츠. 검증조차 안 함.</KVItem>
+</KV>
+
+### Validation: 조건부 요청
+
+만료된 응답을 다시 쓸 수 있는지 묻는 두 방식:
+
+- **ETag**: 콘텐츠의 해시·버전. 요청 시 <code>If-None-Match: "abc123"</code>. 같으면 **304 Not Modified** + 본문 0바이트.
+- **Last-Modified**: 마지막 수정 시각. <code>If-Modified-Since: ...</code>. ETag보다 정밀도 낮음.
+
+### Vary: 같은 URL의 여러 표현
+
+<code>Vary: Accept-Encoding</code>이면 gzip 사용자와 brotli 사용자에게 다른 응답: 캐시 키에 헤더가 포함됨.
+<code>Vary: Cookie</code>는 캐시 *키*가 쿠키 값마다 분리됨 (저장은 됨, 다만 사용자마다 키가 달라 사실상 사용자별 캐시 = hit ratio 폭락). 무효화(no-store)와는 다름.
+
+<Callout tone="bad">
+  <strong>CDN 운영 함정</strong>: <code>Vary: User-Agent</code>는 거의 모든 UA마다 다른 캐시 항목 →
+  히트율 0%에 가까워짐. 클라이언트 힌트(<code>Sec-CH-UA</code>)나 명시적 변형 사용.
+</Callout>
+
+## CORS: 브라우저의 동일출처 정책 우회
+
+다른 origin(<code>https://a.com</code> → <code>https://api.b.com</code>)으로의 fetch는 기본 차단. **CORS**가 origin 간 명시적 허용 메커니즘:
+
+### Simple request vs Preflight
+
+- **Simple**: GET/POST/HEAD + CORS-safelisted 헤더만(Accept/Accept-Language/Content-Language + Content-Type은 form 계열만) → 그냥 요청 보내고 응답의 <code>Access-Control-Allow-Origin</code> 검사.
+- **Preflight**: PUT/DELETE/PATCH, 또는 커스텀/제한 헤더 (`Authorization` 포함, `X-*` 커스텀, `application/json` Content-Type 등) → 실 요청 전 **OPTIONS 요청** 으로 허용 여부 먼저 확인. 비용 1 RTT 추가. 운영에서 `Authorization` 헤더 때문에 preflight 발동하는 게 가장 흔함.
+
+```http
+OPTIONS /api/items HTTP/1.1
+Origin: https://a.com
+Access-Control-Request-Method: DELETE
+Access-Control-Request-Headers: x-csrf-token
+
+# 응답
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://a.com
+Access-Control-Allow-Methods: GET, POST, DELETE
+Access-Control-Allow-Headers: x-csrf-token
+Access-Control-Max-Age: 86400   ← preflight 캐시 24시간
+```
+
+<Callout tone="bad">
+  <code>Access-Control-Allow-Origin: *</code>와 <code>Access-Control-Allow-Credentials: true</code>를 같이 쓰면 브라우저가 거부.
+  쿠키를 동반하려면 origin을 명시해야 함.
+</Callout>
+
+### CORS vs CSRF
+
+자주 혼동하는 두 개념:
+- **CORS**: 다른 origin의 응답을 *읽을 수 있는가*. 브라우저가 강제.
+- **CSRF**: 다른 origin이 *내 쿠키로 요청을 보낼 수 있는가*. 서버가 토큰·SameSite로 막아야 함.
+CORS는 CSRF를 자동으로 막아주지 *않습니다*.
+
+## 쿠키 보안: 2024+ 모범
+
+<KV>
+  <KVItem term="HttpOnly">JavaScript가 못 읽음. XSS로 토큰 탈취 차단.</KVItem>
+  <KVItem term="Secure">HTTPS에서만 전송. HTTP 다운그레이드 노출 방지.</KVItem>
+  <KVItem term="SameSite=Strict">크로스 사이트 요청에 쿠키 미전송. CSRF 차단 + 외부 링크로 들어올 때도 로그아웃 상태로 보임.</KVItem>
+  <KVItem term="SameSite=Lax">기본값. 톱-레벨 navigation(링크 클릭)엔 전송, iframe·서드파티 fetch엔 미전송.</KVItem>
+  <KVItem term="SameSite=None">크로스 사이트 허용. Secure 필수.</KVItem>
+  <KVItem term="__Host- prefix">쿠키 이름이 <code>__Host-</code>로 시작하면 브라우저가 강제: Secure + Path=/ + Domain 없음. <strong>가장 안전한 쿠키 패턴.</strong></KVItem>
+  <KVItem term="Partitioned (CHIPS)">서드파티 쿠키 차단 시대의 절충안. 임베드된 사이트가 자기 파티션의 쿠키만 사용.</KVItem>
+</KV>
+
+## 보안 헤더: 최소 셋업
+
+```http
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-abc123'
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: geolocation=(), microphone=()
+```
+
+- **HSTS**: HTTP → HTTPS 강제. <code>preload</code>를 붙이고 hstspreload.org에 등록하면 브라우저 내장 목록에 들어가 첫 방문부터 HTTPS 강제.
+- **CSP nonce**: 인라인 스크립트를 무작위 nonce와 묶어 XSS 방어. <code>'unsafe-inline'</code>은 마지막 선택지.
+
+## HTTP/2·3에서 변경되는 것들
+
+- **헤더 압축**: 같은 헤더가 반복되면 HPACK/QPACK이 거의 0바이트. → "더 많은 헤더 = 느림"이 더 이상 안 맞음.
+- **Server Push**: HTTP/2에서 도입됐다 사실상 폐기 (Chrome이 제거). 이제는 **103 Early Hints**가 그 자리를 차지.
+- **Prioritization**: HTTP/2의 dependency tree는 복잡해서 잘 안 됐고, HTTP/3는 **단순한 우선순위 헤더**로 회귀.
+- **CONNECT-UDP / MASQUEUE**: HTTP/3 위에서 UDP/IP 터널링. VPN 차단 우회 시도에 활용.

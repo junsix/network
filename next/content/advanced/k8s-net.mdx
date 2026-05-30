@@ -1,0 +1,364 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "16 · Container Networking",
+  title: "Kubernetes 네트워킹",
+  subtitle: (
+    <>
+      <Accent>CNI · Service · kube-proxy · NetworkPolicy</Accent>의 진짜 동작
+    </>
+  ),
+  lead: (
+    <>
+      "파드끼리는 NAT 없이 통신한다"는 한 줄이 K8s 네트워킹의 헌법입니다.
+      그 한 줄을 지키기 위해 CNI·overlay·서비스 추상화·iptables/IPVS/eBPF·NetworkPolicy 같은
+      여러 층이 같이 움직입니다. 시니어 면접의 절반은 여기서 나옵니다.
+    </>
+  ),
+};
+
+<Eyebrow>네 가지 약속</Eyebrow>
+
+## K8s 네트워킹 모델
+
+쿠버네티스가 보장하는 네 가지는 클러스터 구현이 무엇이든 동일하다.
+
+<Steps>
+  <li>모든 <strong>파드는 고유 IP</strong>를 가진다 (호스트와 공유 X, NAT 없음)</li>
+  <li>모든 파드는 <strong>다른 모든 파드와 NAT 없이 통신</strong> 가능</li>
+  <li>모든 <strong>노드는 모든 파드와 NAT 없이 통신</strong> 가능</li>
+  <li>파드 안의 컨테이너들은 <strong>localhost 공유</strong> (같은 네트워크 네임스페이스)</li>
+</Steps>
+
+<Callout>
+  "왜 K8s는 NAT를 안 쓰나?"는 단골 질문. 답: 디버깅 가능성 + 정책의 명확성.
+  파드 IP가 그대로 보이면 흐름 추적·NetworkPolicy 적용·트레이싱이 직선적.
+</Callout>
+
+<Eyebrow>CNI</Eyebrow>
+
+## 파드에 IP가 어떻게 붙는가
+
+kubelet이 파드를 만들 때 CNI 플러그인을 호출합니다:
+
+<Steps>
+  <li>kubelet → containerd/CRI-O → 파드의 네트워크 네임스페이스 생성</li>
+  <li>CNI 바이너리에 <code>ADD</code> 명령 + 네임스페이스 경로 전달</li>
+  <li>CNI가 IPAM(IP Address Management)에서 IP 할당</li>
+  <li>veth 페어 생성: 한 쪽은 파드 ns 안 <code>eth0</code>, 다른 쪽은 호스트 브릿지/라우팅</li>
+  <li>라우팅·iptables 룰 설치, 결과(IP·게이트웨이·DNS) 반환</li>
+</Steps>
+
+<Eyebrow>CNI 비교</Eyebrow>
+
+## 주요 CNI 플러그인
+
+<DataTable>
+  <thead><tr><th></th><th>데이터플레인</th><th>특징</th><th>적합한 곳</th></tr></thead>
+  <tbody>
+    <tr><td>Flannel</td><td>VXLAN overlay (or host-gw)</td><td>가장 단순. 정책 없음.</td><td>실험·소규모</td></tr>
+    <tr><td>Calico</td><td>BGP underlay (or VXLAN)</td><td>NetworkPolicy 표준 구현. eBPF 모드 추가됨.</td><td>대규모·정책 중요</td></tr>
+    <tr><td>Cilium</td><td>eBPF</td><td>kube-proxy 대체, L7 정책, 서비스 메시까지. 가장 풍부.</td><td>고성능·관측·메시</td></tr>
+    <tr><td>AWS VPC CNI</td><td>VPC ENI 직접</td><td>파드 IP가 VPC IP. AWS 네이티브.</td><td>EKS</td></tr>
+    <tr><td>Azure CNI / GKE</td><td>클라우드 내장</td><td>VPC 통합. ENI/Alias IP 사용.</td><td>각 매니지드 K8s</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>Underlay vs Overlay</Eyebrow>
+
+## 파드 트래픽이 노드 밖을 나갈 때
+
+<PCBox>
+  <PC tone="good" title="Overlay (VXLAN)">
+    <ul>
+      <li>파드 패킷을 노드 간 UDP/4789 터널에 캡슐화</li>
+      <li>VPC 라우팅과 무관: 구성이 자유로움</li>
+      <li>오버헤드: 50바이트 + 캡슐/디캡슐 CPU 비용</li>
+      <li>MTU 1500이면 실효 1450. <strong>jumbo frame</strong>(9000) 권장</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="Underlay (BGP / 클라우드 라우팅)">
+    <ul>
+      <li>파드 prefix를 라우터에 광고 → 인프라가 직접 라우팅</li>
+      <li>캡슐화 없음 → 풀스피드</li>
+      <li>인프라 협조 필요 (BGP peer 또는 클라우드 VPC route table)</li>
+      <li>파드 수 ≤ VPC IP 한계</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Callout tone="bad">
+  AWS VPC CNI는 노드당 ENI 수·ENI당 IP 수 한계 때문에 큰 노드(m5.24xlarge)도 파드 ~700개에서 막힘.<br/>
+  계산식: <code>max-pods = (ENI 수) × (ENI당 IP 수) - 1</code>. m5.large = 3 × 10 - 1 = 29 파드.<br/>
+  완화 옵션:
+  <ul>
+    <li><strong>Prefix Delegation</strong> (/28 = 16 IP 단위) → m5.large가 ~110 파드. <strong>Nitro 인스턴스 한정</strong>.</li>
+    <li><strong>Custom Networking</strong> + Secondary CIDR + ENIConfig CRD: subnet IP 부족 시 별도 CIDR로 분리</li>
+    <li><strong>WARM_IP_TARGET / MINIMUM_IP_TARGET</strong> 튜닝으로 IP pre-warming 비용 통제</li>
+    <li>또는 Cilium ENI 모드로 분산</li>
+  </ul>
+  증상: <code>failed to assign an IP address to container</code>. 모니터링: VPC CNI <code>ipamd</code> 메트릭.
+</Callout>
+
+<Eyebrow>Service</Eyebrow>
+
+## 가상 IP의 추상화
+
+파드는 죽고 다시 만들어집니다: IP가 바뀜. 그래서 **Service**가 고정된 가상 IP(ClusterIP)를 제공하고, 그 뒤로 라벨 셀렉터에 매치되는 파드들이 백엔드.
+
+<DataTable>
+  <thead><tr><th>Service 타입</th><th>접근 가능 범위</th><th>구현</th></tr></thead>
+  <tbody>
+    <tr><td>ClusterIP</td><td>클러스터 내부만</td><td>kube-proxy가 ClusterIP → 파드 DNAT</td></tr>
+    <tr><td>NodePort</td><td>모든 노드의 30000-32767 포트</td><td>iptables/IPVS로 모든 노드에 룰 설치</td></tr>
+    <tr><td>LoadBalancer</td><td>외부 (클라우드 LB 자동 프로비저닝)</td><td>cloud-controller-manager가 ELB·NLB 생성</td></tr>
+    <tr><td>ExternalName</td><td>DNS CNAME 매핑</td><td>kube-dns가 CNAME 응답</td></tr>
+    <tr><td>Headless (ClusterIP: None)</td><td>파드 IP 목록을 DNS A로 직접</td><td>StatefulSet·서비스 디스커버리에 쓰임</td></tr>
+  </tbody>
+</DataTable>
+
+### externalTrafficPolicy: Local vs Cluster (면접 단골)
+
+LoadBalancer/NodePort에 외부 트래픽이 도착하면 다른 노드의 파드로 더 라우팅될 수 있음. 그 *두 번째 hop*에서:
+
+<PCBox>
+  <PC tone="good" title="Cluster (기본)">
+    <ul>
+      <li>두 번째 hop에서 SNAT → <strong>클라이언트 IP가 노드 IP로 덮임</strong></li>
+      <li>노드 간 부하 균등</li>
+      <li>WAF·rate limit·로깅에서 진짜 클라이언트 IP 잃음</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Local">
+    <ul>
+      <li>SNAT 없이 노드 로컬 파드로만 전달 → 클라이언트 IP 보존</li>
+      <li><strong>노드에 endpoint 없으면 패킷 drop</strong> → LB health check가 endpoint 있는 노드만 살아 보이게 필수</li>
+      <li>노드별 부하 불균등 (endpoint 분포에 따름)</li>
+    </ul>
+  </PC>
+</PCBox>
+
+### EndpointSlices (1.21 GA)
+
+큰 클러스터에서 Endpoints 단일 오브젝트는 endpoint 수 × watch 수가 etcd 부담. **1만+ endpoint** 환경에서 EndpointSlices가 그 부담을 분리. kube-proxy/CNI는 1.21+에서 EndpointSlices를 watch (Endpoints는 호환용으로 유지).
+
+<Eyebrow>kube-proxy</Eyebrow>
+
+## 서비스 트래픽을 파드로 분산하는 3가지 모드
+
+<KV>
+  <KVItem term="userspace (deprecated)">초기 구현. 유저 공간에서 프록시. 느려서 제거.</KVItem>
+  <KVItem term="iptables">기본값. ClusterIP → 백엔드 파드들을 iptables NAT 룰로. <strong>본질적 한계는 룰 수가 아니라 sync 비용</strong>: endpoint 변경 시마다 <code>iptables-restore</code>가 전체 룰 재로딩(O(N)). conntrack 의존도 함께 옴.</KVItem>
+  <KVItem term="IPVS">커널 LB. 해시 테이블 기반이라 룩업 O(1) + 룰 변경이 점진적. <strong>전환 임계: 1k 서비스 / 10k endpoint 부근에서 iptables sync가 SLO를 깸</strong>.</KVItem>
+  <KVItem term="eBPF (Cilium)">XDP/tc 훅으로 패킷 처리. kube-proxy 자체를 대체. <code>kubeProxyReplacement=true</code> 옵션 + 커널 5.x+ 요구. 가장 빠르고 관측·정책 통합.</KVItem>
+</KV>
+
+<Callout tone="bad">
+  <strong>iptables 모드의 진짜 사고: sync 지연.</strong>
+  5,000 서비스 환경에서 endpoint 하나만 바뀌어도 전체 룰 재로딩에 수 초~수십 초. 그 동안 endpoint 변경이 트래픽에 반영 안 됨 → 죽은 파드로 트래픽 가서 5xx. 모니터링: <code>kube_proxy_sync_proxy_rules_duration_seconds</code> p99.
+</Callout>
+
+<Callout tone="bad">
+  <strong>iptables 모드 = conntrack 의존</strong>: 노드 부하 시 <code>nf_conntrack: table full, dropping packet</code>으로 <strong>새 연결만 거부</strong>(기존 연결은 정상). 증상이 미묘해 디버깅 어려움.
+  기본 <code>nf_conntrack_max=262144</code>는 큰 노드에선 부족. 늘리는 법: <code>sysctl -w net.netfilter.nf_conntrack_max=1048576</code>. 모니터링: <code>/proc/sys/net/netfilter/nf_conntrack_count</code>의 max 대비 비율 80% 알람.
+</Callout>
+
+<Eyebrow>iptables 룰 추적</Eyebrow>
+
+## ClusterIP 패킷 한 개의 경로
+
+```
+[파드 → ClusterIP 10.96.0.42:80 SYN]
+   ↓
+PREROUTING (nat) → KUBE-SERVICES → KUBE-SVC-XYZ
+   ↓ (목적지가 서비스 IP면 매치)
+KUBE-SEP-AAA 또는 KUBE-SEP-BBB ... (확률적 분기)
+   ↓
+DNAT → 10.244.1.5:8080 (선택된 파드 IP)
+   ↓
+호스트 라우팅 결정 → veth 또는 VXLAN
+```
+
+각 서비스마다 KUBE-SVC 체인 + 각 endpoint마다 KUBE-SEP 체인이 생김. 확률 분기는 <code>statistic</code> 모듈로 N개 endpoint를 1/N, 1/(N-1)... 식으로 균등 분배.
+
+### Hairpin NAT (면접 단골)
+
+파드 A가 자기 자신을 백엔드로 가진 ClusterIP로 요청을 보내면 어떻게 될까? SNAT 없으면 패킷이 자기에게 돌아와 source/destination이 같아 응답 라우팅이 깨짐.
+
+해결책: CNI별로 다름:
+- **kubelet `hairpin-mode=hairpin-veth`** (기본): veth pair에 hairpin 플래그를 켜 같은 인터페이스로 reflection 허용
+- **promiscuous bridge**: 노드 bridge가 자기 자신으로 가는 패킷을 받아들이게
+- **Cilium**: eBPF 단에서 자동 처리, 추가 설정 불필요
+
+증상이 *간헐적*이라 디버깅 어려움. ClusterIP를 통한 self-call 패턴 (예: 자기 metrics endpoint 호출, gRPC self-loop)에서 발생.
+
+<Eyebrow>Ingress vs Gateway API</Eyebrow>
+
+## L7 라우팅의 두 세대
+
+Ingress(레거시):
+- 단일 리소스가 호스트·경로 기반 라우팅 표현
+- 구현체별 어노테이션이 난립 (nginx-ingress, traefik, ALB controller…)
+- TCP/UDP·고급 라우팅 표현이 빈약
+
+Gateway API(2023 GA):
+- 세 리소스로 분리: GatewayClass(구현체 선택), Gateway(LB 인스턴스), HTTPRoute/TCPRoute/...
+- 권한 분리: 인프라팀이 Gateway 관리, 앱팀이 Route만 작성
+- 트래픽 분할(canary), 헤더 매칭, 미러링 등 표준화
+
+<Eyebrow>NetworkPolicy</Eyebrow>
+
+## 파드 간 방화벽
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow-from-frontend
+spec:
+  podSelector:
+    matchLabels: { app: api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: frontend }
+        - namespaceSelector:
+            matchLabels: { name: prod }
+      ports:
+        - protocol: TCP
+          port: 8080
+```
+
+규칙 (헷갈리는 3가지 빈 케이스):
+
+| 케이스 | 의미 |
+|---|---|
+| `podSelector: {}` | <strong>네임스페이스의 모든 파드</strong> 선택 (빈 selector = 전체) |
+| `podSelector`가 매치 결과 0개 | 정책 자체가 적용 안 됨 → allow-all 유지 |
+| `ingress: []` 또는 ingress 키 누락 | 선택된 파드의 <strong>모든 ingress 차단</strong> |
+
+추가:
+- 정책은 누적 OR: 여러 정책 중 하나라도 허용하면 허용 (deny 룰 없음, default deny + allow rules 모델)
+- ingress와 egress는 별도. 한쪽만 설정해도 정책 적용
+
+<Callout tone="bad">
+  <strong>HostNetwork 파드는 NetworkPolicy 대상이 아님.</strong>
+  같은 namespace 격리를 정책으로 깔았는데 HostNetwork 파드만 빠져나가는 사고. 시스템 컴포넌트(CNI 자체, kube-proxy)가 그 예: 정책 만들 때 명시적으로 검토.
+</Callout>
+
+<Callout tone="bad">
+  <strong>CNI가 NetworkPolicy를 구현 안 하면 정책은 noop.</strong>
+  Flannel 기본은 NetworkPolicy 미지원. 정책 만들었는데 안 막히면 우선 <code>kubectl get pods -A | grep -i 'calico\|cilium\|kube-router'</code>로 enforcer 확인.
+</Callout>
+
+### Egress 게이트웨이 패턴
+
+NetworkPolicy로 파드의 egress를 막는 건 기본인데, *어디로* 나갈 수 있는지 IP/CIDR이 아닌 도메인으로 통제하고 싶을 때:
+- **Cilium**: `CiliumNetworkPolicy`에 `toFQDNs` 지원, DNS-aware policy
+- **Calico**: `GlobalNetworkPolicy`로 도메인·DNS 화이트리스트
+- **Istio**: ServiceEntry + AuthorizationPolicy로 L7 egress 제어
+
+<Callout tone="bad">
+  표준 NetworkPolicy는 L3/4만. <strong>L7(HTTP path, gRPC method) 기반은 표준 밖</strong>: Cilium의 CiliumNetworkPolicy, Calico의 GlobalNetworkPolicy 같은 확장이 필요.
+</Callout>
+
+<Eyebrow>CoreDNS</Eyebrow>
+
+## 클러스터 내부 DNS
+
+- 모든 파드의 <code>/etc/resolv.conf</code>가 CoreDNS의 ClusterIP를 가리킴
+- <code>service.namespace.svc.cluster.local</code> A 레코드 = ClusterIP
+- Headless service면 파드 IP 목록 반환
+- <code>ndots:5</code> + search 도메인 5~6개로 **외부 도메인 조회가 N+1번** 발생
+
+<Callout>
+  유명한 5초 DNS 지연: <code>conntrack</code> 경합 + UDP 손실로 재시도가 5초 RTO에 걸림.
+  완화: <strong>NodeLocal DNSCache</strong>(노드마다 캐시) + TCP 사용 + <code>single-request-reopen</code>.
+</Callout>
+
+### NodeLocal DNSCache 메커니즘 (5초 RTO 사고의 표준 처방)
+
+<Steps>
+  <li>노드마다 DaemonSet으로 CoreDNS-like 캐시 데몬 띄움</li>
+  <li>iptables 룰로 <code>169.254.20.10</code> link-local IP를 가로채 그 데몬에 라우팅</li>
+  <li>파드의 <code>/etc/resolv.conf</code> nameserver를 그 link-local IP로 설정</li>
+  <li>대부분의 조회가 노드 로컬에서 종결 → <strong>conntrack 안 탐</strong> → race 자체가 사라짐</li>
+  <li>캐시 미스 시에만 upstream CoreDNS에 TCP로 질의</li>
+</Steps>
+
+핵심: link-local이라 라우팅 안 거치고 conntrack 미사용. 그래서 5초 RTO 사고의 진짜 답이 됨.
+
+### 알아둬야 할 숫자
+
+<DataTable>
+  <thead><tr><th>지표</th><th>기본/한계</th><th>비고</th></tr></thead>
+  <tbody>
+    <tr><td><code>nf_conntrack_max</code></td><td>262,144</td><td>큰 노드에선 1M~4M으로 증가 권장. RAM/16384 어림</td></tr>
+    <tr><td>MTU: VXLAN overlay</td><td>1450 (= 1500 - 50)</td><td>jumbo 가능하면 9000 권장</td></tr>
+    <tr><td>MTU: WireGuard</td><td>1420</td><td>WireGuard 캡슐 80 byte</td></tr>
+    <tr><td>MTU: IPsec ESP</td><td>~1438</td><td>알고리즘 따라 다름</td></tr>
+    <tr><td>CoreDNS replica</td><td>2 (기본)</td><td>큰 클러스터는 HPA + NodeLocal DNSCache 필수</td></tr>
+    <tr><td>IPVS 전환 임계</td><td>1k svc / 10k endpoint</td><td>iptables sync가 SLO 깨지는 지점</td></tr>
+    <tr><td>EKS m5.large 파드 한계</td><td>29 (기본) / ~110 (Prefix Delegation)</td><td>(ENI × IP) - 1</td></tr>
+    <tr><td>NodePort range</td><td>30000-32767</td><td>2,767 포트, 동시 노드별 서비스 수 한계</td></tr>
+  </tbody>
+</DataTable>
+
+### ndots:5의 N+1 쿼리 산수
+
+`/etc/resolv.conf`에 search 도메인 6개 + `ndots:5`면, `api.example.com`(점 2개 < 5)을 조회할 때:
+
+```
+api.example.com.svc.cluster.local       (1)
+api.example.com.cluster.local           (2)
+api.example.com.cluster.local           (3)
+... 모든 search 도메인 시도 후
+api.example.com                         (마지막: 절대 도메인)
+```
+
+A + AAAA 동시 조회면 위 ×2. 외부 도메인 한 번 풀려고 14회 쿼리. 완화:
+- 끝에 `.` 붙여 FQDN 강제: `api.example.com.`
+- 파드 spec에 `dnsConfig.options: ndots: 2`
+- NodeLocal DNSCache로 노드 로컬 종결
+
+<Eyebrow>관측</Eyebrow>
+
+## 디버깅 도구
+
+<KV>
+  <KVItem term="kubectl exec + 도구"><code>nicolaka/netshoot</code> 이미지가 dig·tcpdump·iperf·mtr 다 포함.</KVItem>
+  <KVItem term="ksniff"><code>kubectl sniff &lt;pod&gt;</code>: 파드의 트래픽을 로컬 Wireshark로 스트리밍.</KVItem>
+  <KVItem term="Hubble (Cilium)">eBPF 기반. 파드 간 흐름·정책 결정을 실시간 시각화.</KVItem>
+  <KVItem term="kubeshark">L7 트래픽을 OSI 7계층까지 디코드해 보여줌.</KVItem>
+  <KVItem term="conntrack -L">노드의 NAT 매핑 테이블 확인. SNAT 추적에 필수.</KVItem>
+</KV>
+
+<Eyebrow>운영 안티패턴</Eyebrow>
+
+## 자주 부딪치는 함정
+
+- **HostNetwork 남용**: 파드가 호스트 네트워크 ns를 공유 → 포트 충돌, 격리 깨짐. 시스템 컴포넌트(CNI 자체, kube-proxy)만 쓸 것.
+- **Service mesh를 모든 곳에 도입**: 사이드카가 메모리 50~100MB × 수천 파드. 정말 필요한지부터 검토. eBPF mesh가 대안.
+- **NodeLocal DNSCache 안 쓰기**: 큰 클러스터에서 CoreDNS가 병목. CPU 사용량·DNS QPS 메트릭 확인.
+- **NodePort를 외부 진입점으로**: 30000~32767 임의 포트. 운영에 부적합. LoadBalancer 또는 Ingress 사용.
+- **Service selector 라벨 오타**: 엔드포인트 0개. <code>kubectl get endpoints &lt;svc&gt;</code>로 확인 필수.
+- **MTU 불일치**: VXLAN 50바이트 오버헤드 미반영 → 큰 패킷 손실. Cilium은 자동 검출, 다른 CNI는 수동.
+
+<Eyebrow>면접 단골</Eyebrow>
+
+## 자주 묻는 질문
+
+- "ClusterIP 10.96.0.42로 트래픽을 보내면 그 IP를 가진 인터페이스는 어디 있나?" → **어디에도 없다**. iptables NAT가 DNAT로 다시 쓸 뿐.
+- "한 노드에서 다른 노드의 파드로 가는 패킷을 추적해보라." → veth → 호스트 라우팅 → (overlay: VXLAN 캡슐, underlay: BGP·VPC 라우팅) → 상대 노드 → veth → 파드.
+- "kube-proxy를 끄면 어떻게 되나?" → ClusterIP가 무용지물. 단, Cilium은 자체 eBPF로 대체 가능하니 kube-proxy를 끄고 운영할 수 있다.
+- "DNS 조회가 가끔 5초씩 멈춘다. 원인은?" → conntrack race + UDP 동시 요청 손실 + 5초 RTO.
+- "NetworkPolicy를 만들었는데 안 막힌다." → CNI가 NetworkPolicy를 구현하지 않거나(Flannel 기본), 라벨 selector가 빈 집합.
+- "파드가 외부로 나갈 때 SNAT는 누가?" → 노드에서 <code>MASQUERADE</code> 룰. AWS VPC CNI는 <strong>VPC 내부엔 파드 IP 그대로</strong> 가지만 <strong>인터넷 outbound는 기본 SNAT</strong>(노드 EIP/ENI). <code>AWS_VPC_K8S_CNI_EXTERNALSNAT=true</code>로 꺼야 외부도 그대로 나감 (단 NAT GW/TGW에서 별도 라우팅 필요).

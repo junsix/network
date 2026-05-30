@@ -1,0 +1,285 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Lane } from "@/components/visual/Lane";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "14 · Identity & Authorization",
+  title: "OAuth · OIDC · JWT · mTLS",
+  subtitle: (
+    <>
+      <Accent>누구냐, 무엇을</Accent> 할 수 있느냐
+    </>
+  ),
+  lead: (
+    <>
+<a href="/docs/tls">TLS</a>는 채널을 안전하게 만들지만, "이 요청을 보낸 게 진짜 누구인지", "그 사람이 무엇을 할 권한이 있는지"는 별도의 문제입니다.
+      <strong>OAuth</strong>(Open Authorization)는 비밀번호 공유 없이 권한을 위임하기 위해, <strong>OIDC</strong>(OpenID Connect)는 "신원" 자체를 다루기 위해,
+      <strong>JWT</strong>(JSON Web Token)는 그 정보를 운반하는 컨테이너로, <strong>mTLS</strong>(mutual TLS)는 서비스 간 신원으로: 각자 다른 층의 문제를 풉니다.
+    </>
+  ),
+};
+
+<Eyebrow>왜 OAuth가 만들어졌나</Eyebrow>
+
+## 비밀번호 위임의 시대를 끝내려고
+
+과거에는 외부 서비스가 사용자의 Gmail에 접근하려면 사용자에게 비밀번호를 요구했습니다.
+모든 권한을 통째로 넘기는 셈이고, 외부 서비스가 그 비밀번호를 어딘가에 저장해야 했죠.
+OAuth는 그 대신 좁은 범위의 토큰을 발급해 위임합니다.
+
+<Eyebrow>역할</Eyebrow>
+
+## 4개의 캐릭터
+
+<KV>
+  <KVItem term="Resource Owner">실제 사용자. 자기 데이터의 주인.</KVItem>
+  <KVItem term="Client">그 데이터에 접근하려는 앱 (모바일 앱, SPA, 백엔드 등).</KVItem>
+  <KVItem term="Authorization Server (AS)">사용자에게 동의를 받고 토큰을 발급하는 서버 (예: Google, Auth0).</KVItem>
+  <KVItem term="Resource Server">실제 API 서버. 토큰을 받아 검증하고 응답.</KVItem>
+</KV>
+
+<Eyebrow>대표 흐름</Eyebrow>
+
+## Authorization Code + PKCE (가장 권장)
+
+<Lane
+  nodes={[
+    { label: "USER", meta: <>User<br/>(Browser)</> },
+    { label: "CLIENT", meta: "Client App" },
+    { label: "AS", meta: <>Authorization<br/>Server</> },
+    { label: "API", meta: <>Resource<br/>Server</> },
+  ]}
+  runLabel="▶ Authorization Code Flow"
+  steps={[
+    { say: "Client: code_verifier 생성 + code_challenge = SHA256(verifier)" },
+    { say: "Client → User browser: AS의 /authorize로 리다이렉트" },
+    { fly: { label: "redirect → /authorize", cls: "syn", duration: 1000 } },
+    { say: "User → AS: 로그인 + 동의" },
+    { fly: { label: "login + consent", cls: "data", duration: 1100 } },
+    { say: "AS → User browser: redirect_uri로 authorization code 전달" },
+    { fly: { label: "302 redirect ?code=xyz", cls: "ack", duration: 1000, from: "right" } },
+    { say: "User browser → Client: code 전달" },
+    { fly: { label: "code=xyz", cls: "data", duration: 900, from: "right" } },
+    { say: "Client → AS /token: code + code_verifier 제출" },
+    { fly: { label: "POST /token (code, verifier)", cls: "syn", duration: 1100 } },
+    { say: "AS: SHA256(verifier) == challenge 확인 → access·refresh·id token 발급" },
+    { fly: { label: "{access, refresh, id_token}", cls: "ack", duration: 1100, from: "right" } },
+    { say: "Client → API: Authorization: Bearer <access_token>" },
+    { fly: { label: "GET /me  Bearer ...", cls: "data", duration: 1000 } },
+    { fly: { label: "200 OK  {user data}", cls: "ack", duration: 1000, from: "right" } },
+    { say: "완료. access는 짧고, 만료 시 refresh로 재발급." },
+  ]}
+/>
+
+<Steps>
+  <li>Client가 무작위 <code>code_verifier</code>를 만들고, 그 SHA-256 해시 <code>code_challenge</code>를 함께 AS의 인가 엔드포인트로 사용자를 리다이렉트.</li>
+  <li>사용자가 AS에서 로그인 + 동의. AS는 <code>authorization code</code>를 Client의 redirect URI로 돌려줌.</li>
+  <li>Client가 그 code + <code>code_verifier</code>를 AS의 토큰 엔드포인트에 제출.</li>
+  <li>AS는 challenge와 verifier가 맞는지 확인하고 access token (+ refresh token + ID token)을 발급.</li>
+  <li>Client가 access token을 Bearer로 붙여 API 호출.</li>
+</Steps>
+
+<Callout tone="good">
+  <strong>왜 PKCE?</strong> 모바일·SPA처럼 client secret을 안전히 못 두는 환경에서,
+  authorization code를 가로채도 verifier를 모르면 토큰을 못 받게 만들기 위함. 2020년 이후로는 confidential client에도 권장.
+</Callout>
+
+<Eyebrow>Grant Types</Eyebrow>
+
+## 상황별 흐름
+
+<DataTable>
+  <thead><tr><th>Grant</th><th>언제</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td>Authorization Code (+PKCE)</td><td>웹·모바일·SPA</td><td>가장 권장. 사용자 동의 포함.</td></tr>
+    <tr><td>Client Credentials</td><td>서버 ↔ 서버</td><td>사용자 없는 머신 토큰. 자기 자신 인증.</td></tr>
+    <tr><td>Device Code</td><td>TV·CLI 등 입력이 어려운 기기</td><td>다른 기기에서 사용자 코드 입력.</td></tr>
+    <tr><td>Refresh Token</td><td>access 만료 시</td><td>사용자 재로그인 없이 새 토큰.</td></tr>
+    <tr><td>Implicit (구식)</td><td>—</td><td><strong>더 이상 권장 안 함</strong>. PKCE로 대체.</td></tr>
+    <tr><td>Password (구식)</td><td>—</td><td>password 그대로 넘김. <strong>피하라</strong>.</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>OIDC</Eyebrow>
+
+## OAuth + 신원
+
+OAuth만으로는 "이 사용자가 누구인지"를 표준화된 방식으로 알 수 없습니다 (API마다 다릅니다).
+OIDC(OpenID Connect)는 OAuth 위에 ID Token(JWT)을 얹어 "이 토큰의 주인은 sub=12345의 user@example.com"이라는 정보를 표준화합니다.
+로그인 용도라면 OAuth가 아니라 OIDC가 정답입니다.
+
+```json
+// /.well-known/openid-configuration
+{
+  "issuer": "https://accounts.example.com",
+  "authorization_endpoint": ".../authorize",
+  "token_endpoint": ".../token",
+  "userinfo_endpoint": ".../userinfo",
+  "jwks_uri": ".../.well-known/jwks.json",
+  "response_types_supported": ["code"],
+  "id_token_signing_alg_values_supported": ["RS256"]
+}
+```
+
+<Eyebrow>JWT</Eyebrow>
+
+## 토큰의 컨테이너: 점으로 구분된 세 조각
+
+JWT는 `header.payload.signature`의 Base64URL 인코딩 세 부분으로 구성됩니다.
+서명은 발급자의 비밀키/사설키로 만들어지고, 검증자는 발급자의 공개키(JWKS)를 받아 확인합니다.
+
+```json
+// header
+{ "alg": "RS256", "kid": "abc123", "typ": "JWT" }
+
+// payload (claims)
+{
+  "iss": "https://accounts.example.com",
+  "sub": "12345",
+  "aud": "client-id",
+  "exp": 1735689600,
+  "iat": 1735686000,
+  "scope": "openid profile email"
+}
+
+// signature
+RSA-SHA256( base64url(header) + "." + base64url(payload), private_key )
+```
+
+<Callout tone="bad">
+  <strong>주의</strong>: <code>alg: none</code> 수락 금지, <code>alg</code>을 서버가 강제할 것,
+  <code>aud</code>·<code>iss</code> 검증 필수, 만료 짧게(보통 5~15분),
+  회수는 introspection 또는 짧은 만료로 달성.
+</Callout>
+
+### Access vs Refresh vs ID
+
+<DataTable>
+  <thead><tr><th>토큰</th><th>용도</th><th>수명</th></tr></thead>
+  <tbody>
+    <tr><td>Access</td><td>API 호출 권한</td><td>짧음 (5~60분)</td></tr>
+    <tr><td>Refresh</td><td>새 access 발급</td><td>길거나 회전 (rotation)</td></tr>
+    <tr><td>ID (OIDC)</td><td>사용자 신원 확인</td><td>인증 직후만 의미</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>mTLS</Eyebrow>
+
+## 서비스 간 신원: 인증서를 양쪽이
+
+보통의 TLS는 클라이언트가 서버의 인증서를 검증하는 단방향입니다.
+mTLS는 서버도 클라이언트의 인증서를 검증합니다. 인증서 자체가 신원입니다.
+Bearer 토큰처럼 탈취되면 어디서나 통하는 약점이 없어 서비스 메시·기관 간 통신에 강합니다.
+
+### SPIFFE / SPIRE
+
+클라우드 네이티브 환경에서 워크로드(파드, VM)에 자동으로 인증서를 부여하기 위한 표준.
+`spiffe://example.org/ns/team-a/sa/billing` 같은 SPIFFE ID가 워크로드 신원.
+SPIRE는 그 ID 발급/회전을 자동화한 런타임. Istio 같은 서비스 메시가 내부적으로 활용합니다.
+
+<Eyebrow>Zero Trust</Eyebrow>
+
+## "내부망이라 안전"이라는 가정을 버리기
+
+전통적 보안은 perimeter: "방화벽 안쪽은 신뢰"였습니다. 그러나 클라우드·SaaS·재택근무가 일상이 된 지금
+그 안팎의 구분 자체가 무의미해졌습니다. Zero Trust는 다음 원칙입니다.
+
+- 매 요청마다 검증: 누가, 어떤 기기에서, 어떤 컨텍스트로: 매번.
+- 최소 권한: scope·role·time-bound 토큰.
+- 네트워크 위치는 신뢰 근거가 아님: VPN으로 들어왔어도 똑같이 검증.
+- 지속적 평가: 세션 도중에도 위험 신호가 보이면 권한을 깎거나 재인증 요구.
+- BeyondCorp(Google), Cloudflare Access, Tailscale 등이 구체적 구현 예.
+
+<Eyebrow>ZTNA 운영</Eyebrow>
+
+## Zero Trust Network Access 운영 디테일
+
+원칙은 단순하지만 운영은 *어휘 다섯 개*로 압축됩니다.
+
+### 1. Short-lived certificate · mTLS rotation
+
+정적 SSH 키·API token 대신 *SSO로 발급된 수 분짜리 인증서*가 표준.
+
+<DataTable>
+  <thead><tr><th>방식</th><th>수명</th><th>회전 방식</th></tr></thead>
+  <tbody>
+    <tr><td>전통 SSH key</td><td>영구</td><td>수동 회수·교체</td></tr>
+    <tr><td>cert-manager(K8s)</td><td>30~90일</td><td>ACME 자동 갱신</td></tr>
+    <tr><td>SPIFFE / SPIRE</td><td>1h~24h</td><td>워크로드 attestation 후 자동 발급</td></tr>
+    <tr><td>Cloudflare Access / Teleport</td><td>5m~1h</td><td>SSO 로그인 시점에 발급</td></tr>
+    <tr><td>AWS IAM Roles Anywhere</td><td>1h</td><td>X.509 → STS 임시 자격증명 교환</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>mTLS rotation 함정</strong>: 인증서 만료 *직전*에 모든 워크로드가 동시에 갱신 시도 → CA 폭주. 해법: jittered renewal (만료의 50~80% 시점에 random offset), staged rollout, CA HA. K8s cert-manager의 <code>renewBefore</code> + <code>spec.duration</code> 비율 튜닝.
+</Callout>
+
+### 2. Device posture
+
+"누구의 노트북인가"만큼 "그 노트북이 안전한가"를 매 요청 평가.
+
+<KV>
+  <KVItem term="OS 패치 수준">CVE 임계 이상의 미패치 있으면 거절. macOS·Windows·Linux 별 점검 도구.</KVItem>
+  <KVItem term="디스크 암호화">FileVault·BitLocker·LUKS on/off 확인.</KVItem>
+  <KVItem term="MDM 등록 여부">기업 MDM(Jamf·Intune·Kandji) 관리 디바이스만 통과.</KVItem>
+  <KVItem term="EDR 실행 여부">CrowdStrike·SentinelOne 같은 endpoint agent 활성 확인.</KVItem>
+  <KVItem term="네트워크 위치 신호">VPN·corporate WiFi *가산점*. 단 단독으론 부족 (BeyondCorp 원칙).</KVItem>
+</KV>
+
+### 3. Session lifetime · Step-up auth
+
+세션은 *짧게* 그리고 *민감 작업엔 재인증*.
+
+<Steps>
+  <li><strong>일반 세션</strong>: 8h~24h. SSO refresh로 매끄럽게 갱신.</li>
+  <li><strong>idle timeout</strong>: 15~30m. 활동 없으면 short-lived cert 만료.</li>
+  <li><strong>Step-up auth</strong>: 민감 작업(prod DB 접근·금융 트랜잭션)엔 *재인증* + MFA 강제. <code>acr_values</code> 또는 OIDC <code>amr</code> 클레임으로 표현.</li>
+  <li><strong>Session revocation</strong>: 위험 신호 감지 시 즉시 무효화. JWT 단점이 여기서: 발급된 토큰은 만료 전까지 유효 → revocation list 또는 짧은 수명으로 우회.</li>
+</Steps>
+
+### 4. Identity-aware proxy 구현 비교
+
+<DataTable>
+  <thead><tr><th>도구</th><th>운영자</th><th>대상</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td><strong>BeyondCorp</strong> (Google)</td><td>자체 구축 (원조)</td><td>모든 사내 앱</td><td>매 요청 평가. Google 내부 표준. 외부 구현 어려움.</td></tr>
+    <tr><td><strong>Cloudflare Access</strong></td><td>SaaS</td><td>웹앱·SSH·RDP·DB</td><td>OIDC + device posture + Tunnel 통합. 가장 빠른 도입.</td></tr>
+    <tr><td><strong>Teleport</strong></td><td>self-host or SaaS</td><td>SSH·K8s API·DB·웹</td><td>모든 infra 자원에 단일 SSO 진입점. audit 강력.</td></tr>
+    <tr><td><strong>Tailscale</strong></td><td>SaaS (mesh)</td><td>node-to-node L3</td><td>WireGuard 기반 mesh + tag ACL. 앱별 정책은 약함.</td></tr>
+    <tr><td><strong>AWS SSM Session Manager</strong></td><td>AWS</td><td>EC2 인스턴스</td><td>IAM 정책 + audit. SSH 22 = 0.</td></tr>
+    <tr><td><strong>Cloudflare WARP</strong> · Zscaler · Netskope</td><td>SaaS</td><td>SASE (Secure Access Service Edge)</td><td>VPN 대체 + SWG + CASB 통합.</td></tr>
+  </tbody>
+</DataTable>
+
+### 5. ZTNA vs VPN: 운영 결정
+
+<DataTable>
+  <thead><tr><th></th><th>전통 VPN</th><th>ZTNA</th></tr></thead>
+  <tbody>
+    <tr><td>접근 단위</td><td>네트워크 (subnet)</td><td>애플리케이션 (URL/API)</td></tr>
+    <tr><td>신뢰 모델</td><td>VPN 통과 = 내부 신뢰</td><td>매 요청 identity + posture 평가</td></tr>
+    <tr><td>탈취 시 영향</td><td>VPN 자격 = 전체 내부망</td><td>해당 앱만, short-lived cert 만료 시점에 자동 차단</td></tr>
+    <tr><td>운영</td><td>concentrator HA·라우팅</td><td>SaaS 또는 self-host control plane</td></tr>
+    <tr><td>지연</td><td>VPN gateway 거침 (사용자 → VPN → 앱)</td><td>가장 가까운 edge → 앱 (anycast)</td></tr>
+    <tr><td>BYOD</td><td>device posture 약함</td><td>device posture 강제 가능</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  ZTNA의 *네트워크 우회*는 <a href="/docs/advanced/nat-traversal">NAT Traversal</a> 페이지의 reverse tunnel과 같은 토대 위에 있습니다. cloudflared·Teleport·AWS SSM이 outbound-only 채널로 inbound를 흉내내고, 그 위에 identity-aware 정책이 얹힙니다.
+</Callout>
+
+<Eyebrow>함정</Eyebrow>
+
+## 자주 실수하는 곳
+
+- localStorage에 access token 저장 (XSS에 통째로 노출) → HttpOnly 쿠키 + CSRF 방어 또는 PKCE 흐름 권장
+- JWT를 그대로 신뢰: 서명·iss·aud·exp 모두 검증해야
+- refresh token rotation 없이 영구 사용: 탈취 시 무한 갱신
+- redirect URI 화이트리스트 누락 → open redirect로 코드 탈취
+- scope를 너무 넓게 요청: 사용자가 동의해도 위험은 그대로

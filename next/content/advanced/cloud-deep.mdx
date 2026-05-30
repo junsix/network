@@ -1,0 +1,400 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { MetricRow, Metric } from "@/components/ui/Metric";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "21 · Cloud Internals",
+  title: "클라우드 심화",
+  subtitle: (
+    <>
+      <Accent>Hyperplane · EKS · Lambda · Edge</Accent>의 속살
+    </>
+  ),
+  lead: (
+    <>
+      <a href="/docs/advanced/cloud-net">클라우드 네트워킹</a>이 사용자의 멘탈 모델이라면, 이 페이지는 클라우드가 그 모델을 어떻게
+      구현하는지를 다룹니다. NAT Gateway 한 대가 어떻게 100 Gbps를 받아내는지, EKS 파드가 어떻게 VPC IP를 받는지,
+      Lambda가 VPC에 들어가면 왜 콜드 스타트가 길어졌다가 다시 짧아졌는지: 시니어 면접의 차별점이 모이는 영역.
+    </>
+  ),
+};
+
+<Eyebrow>SDN 멘탈 모델</Eyebrow>
+
+## 클라우드 VPC는 SDN, 케이블이 아니다
+
+VPC 안의 두 EC2가 같은 서브넷에서 통신할 때: 그 패킷은 *물리적으로* 같은 케이블에 흐르지 않을 수도 있습니다. 데이터센터의 모든 호스트는 *underlay* 네트워크로 연결돼 있고, VPC는 그 위에 그려진 *overlay*입니다.
+
+AWS는 이걸 **Mapping Service**로 구현합니다:
+
+<Steps>
+  <li>EC2 A가 같은 서브넷의 EC2 B로 패킷 송신 (목적지 = B의 ENI MAC + 사설 IP)</li>
+  <li>호스트 하이퍼바이저의 가상 스위치가 패킷을 가로채 Mapping Service에 조회: "B의 사설 IP가 어느 물리 호스트에 있나?"</li>
+  <li>Mapping Service: "rack-42의 host-7"</li>
+  <li>패킷을 underlay 헤더(GENEVE 등)로 캡슐화해 데이터센터 백본으로 송출</li>
+  <li>도착 호스트가 디캡슐 후 게스트 VM에 전달</li>
+</Steps>
+
+<Callout>
+  <strong>왜 이렇게 만들었나</strong>: 물리 VLAN(4,096개 한계) 대신 SDN으로 수백만 개의 VPC를 동일 underlay에 올릴 수 있게.
+  보안 격리도 underlay 단에서 강제: 한 고객의 패킷이 다른 VPC에 *물리적으로도* 닿지 않음.
+</Callout>
+
+<Eyebrow>Hyperplane</Eyebrow>
+
+## NAT Gateway가 어떻게 100 Gbps를 받아내나
+
+NAT Gateway·NLB·EFS·PrivateLink는 **AWS Hyperplane**(2017 공개)이라는 분산 데이터평면 위에 올라가 있습니다. 일반 EC2 인스턴스의 NAT처럼 SPOF가 아닙니다.
+
+<KV>
+  <KVItem term="구조">수십~수백 노드로 분산된 stateful 데이터평면. 흐름(5-tuple)별로 한 노드에 일관 해싱.</KVItem>
+  <KVItem term="확장">노드 추가가 흐름에 영향 없도록 consistent hashing + 흐름 마이그레이션. 신규 흐름은 새 노드, 기존 흐름은 원래 노드 유지.</KVItem>
+  <KVItem term="장애">한 노드 사라져도 같은 흐름이 다른 노드로 자동 이동. 일부 패킷만 잠깐 손실 (TCP가 재전송으로 흡수).</KVItem>
+  <KVItem term="처리량">단일 NAT GW가 100 Gbps급. 진짜 한계는 ENI당 처리량이 아니라 <strong>한 흐름의 5-tuple 해시가 한 노드에 고정</strong>이라는 점.</KVItem>
+  <KVItem term="Shuffle sharding · Cell architecture">Hyperplane이 "SPOF 아닌" 진짜 이유. 전체 노드 풀을 작은 셀로 나누고 고객마다 랜덤한 셀 부분집합을 할당. 한 셀이 죽어도 영향 받는 고객 집합이 격리됨. 그래서 NAT GW 장애 공지가 떠도 *전체*가 아닌 *일부 셀*의 일부 고객만 영향. AWS Builders' Library의 Marc Brooker 자료가 정석.</KVItem>
+</KV>
+
+<Callout tone="bad">
+  <strong>"같은 5-tuple의 흐름은 한 셀에 고정"</strong> 함정.
+  5-tuple(src/dst IP, src/dst port, proto) 해시로 한 셀에 묶이므로, 단일 흐름은 그 셀 한 대의 한계까지만 받을 수 있음. AWS는 2023년 단일 흐름 처리량을 상향했지만 여전히 셀 한 대 ≪ NAT GW 총 100 Gbps. 동일 dst로 폭주 시 클라이언트 인스턴스 분산 또는 source port range 다양화로 흐름을 쪼개야 함.
+</Callout>
+
+<Callout tone="bad">
+  <strong>진짜 자주 부딪치는 운영 사고: SNAT port exhaustion.</strong>
+  NAT GW는 EIP 한 개당 ~55,000 ephemeral port 풀을 가지고, <strong>목적지 IP:port 조합 단위로</strong> 포트를 잡음. 단일 외부 endpoint(예: SMTP relay, 외부 API)로 동시 연결이 5만을 넘으면 <code>ErrorPortAllocation</code>으로 outbound 실패가 줄줄이.<br/>
+  CloudWatch <code>BytesOut</code>은 한가한데 새 연결만 죽는 증상이 단서. 대응: NAT GW에 EIP 추가(최대 8개 → ~44만 포트), 여러 NAT GW로 분산, 동일 dst 트래픽을 source NAT 풀로 분산.
+</Callout>
+
+<Eyebrow>매니지드 LB 내부</Eyebrow>
+
+## ALB · NLB · GLB의 데이터평면 차이
+
+<DataTable>
+  <thead><tr><th></th><th>ALB</th><th>NLB</th><th>GLB (Gateway LB)</th></tr></thead>
+  <tbody>
+    <tr><td>계층</td><td>L7 (HTTP/2/3, gRPC, WebSocket)</td><td>L4 (TCP/UDP)</td><td>L3 (GENEVE 캡슐로 어플라이언스 삽입)</td></tr>
+    <tr><td>데이터평면</td><td>Envoy 기반 매니지드 fleet</td><td>Hyperplane</td><td>Hyperplane + GENEVE</td></tr>
+    <tr><td>처리량 모델</td><td>LCU 기반 자동 스케일 (수 분 소요)</td><td>즉시·무한 (Hyperplane)</td><td>NLB와 유사</td></tr>
+    <tr><td>cold start</td><td>처음 폭증 시 LCU 증가 지연으로 5xx 가능</td><td>없음</td><td>없음</td></tr>
+    <tr><td>고정 IP</td><td>없음 (DNS만)</td><td>AZ별 EIP 할당 가능</td><td>NLB와 유사</td></tr>
+    <tr><td>Cross-zone 트래픽</td><td><strong>무료</strong> (기본 활성)</td><td><strong>유료</strong> (데이터 처리 요금, 기본 비활성)</td><td>NLB와 유사</td></tr>
+    <tr><td>전형 용도</td><td>웹·API</td><td>고PPS·게임·DB 프록시</td><td>방화벽·IDS 어플라이언스 chain</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>NLB cross-zone은 켜면 과금</strong>입니다. AZ A의 NLB endpoint가 AZ B의 backend로 트래픽 보내면 AZ 간 데이터 전송이 추가로 잡힘. ALB는 무료라 같은 패턴이라도 비용 큰 차이. capacity planning에서 자주 놓침.
+</Callout>
+
+<Callout>
+  <strong>"갑작스러운 폭증에 ALB가 5xx를 뱉는다"</strong>가 클래식 운영 사고.
+  AWS Support에 사전 warmup 요청 가능하지만, 알람·블랙 프라이데이는 NLB 또는 트래픽 사전 스로틀로 대비.
+</Callout>
+
+<Eyebrow>EKS / GKE Pod IP</Eyebrow>
+
+## 매니지드 K8s가 파드 IP를 부여하는 두 방식
+
+<PCBox>
+  <PC tone="good" title="EKS: VPC CNI (ENI 기반)">
+    <ul>
+      <li>파드 IP가 <strong>VPC 사설 IP 그대로</strong>: VPC 라우팅·SG가 파드에 직접 적용</li>
+      <li>구현: 노드에 보조 ENI(secondary ENI)들을 부착, 각 ENI에 여러 IP 할당 후 파드에 매핑</li>
+      <li>오버레이 없음 → 캡슐화 비용 0</li>
+      <li><strong>함정</strong>: 인스턴스 타입별 ENI 수·IP 수 한계. m5.large = 3 ENI × 10 IP = 29 파드 (-1 노드 자체)</li>
+      <li>완화: <strong>Prefix Delegation</strong> (/28 = 16 IP 블록 단위 할당) 켜면 m5.large도 ~110 파드</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="GKE: Alias IP">
+    <ul>
+      <li>구글 클라우드가 노드 VM에 <strong>2차 CIDR 블록을 alias로 부여</strong>, 그 블록 안에서 파드 IP 할당</li>
+      <li>VPC route 테이블 자동 갱신: 파드 IP가 VPC 안에서 라우팅됨</li>
+      <li>ENI 수 한계 없음: 노드당 110 파드 표준</li>
+      <li>대신 IP 주소 소비량 큼. 클러스터 IP 풀 설계가 핵심</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<MetricRow>
+  <Metric value="29" label="m5.large 기본 파드 수 (EKS)" />
+  <Metric value="~110" label="Prefix Delegation 후" accent />
+  <Metric value="250+" label="m5.24xlarge Prefix Delegation" />
+  <Metric value="110" label="GKE 노드당 기본 파드 수" />
+</MetricRow>
+
+<Eyebrow>Lambda VPC 통합</Eyebrow>
+
+## "왜 콜드 스타트가 10초였다가 0.2초로 줄었나"
+
+Lambda를 VPC에 넣으면 함수가 사설 리소스(RDS 등)에 접근할 수 있지만, **콜드 스타트가 길어지는** 게 오래된 문제였습니다.
+
+### 옛 방식 (2019 이전)
+함수 호출마다 ENI를 *그 함수의 VPC에* 생성·부착. ENI 프로비저닝에 10초+ 소요.
+
+### Hyperplane ENI 방식 (2019~)
+Lambda 서비스가 *공유 ENI 풀*을 미리 만들어 두고 함수 호출 시 그 위에 *논리적으로* 함수를 부착. Hyperplane이 흐름 라우팅을 담당.
+
+핵심 디테일: **Hyperplane ENI는 (함수 + 보안 그룹 + 서브넷) 조합 단위**로 생성됨. 같은 SG/subnet을 쓰는 함수들은 ENI 한 개를 공유 → 콜드 스타트도 빠르고 ENI 수도 절감. 반대로 SG·subnet을 함수마다 다르게 두면 ENI 수 폭증 + subnet IP 고갈 시 함수 호출 throttling 발생.
+
+<MetricRow>
+  <Metric value="10s+" label="옛 콜드 스타트 (VPC)" />
+  <Metric value="~200ms" label="Hyperplane ENI 후" accent />
+  <Metric value="~50ms" label="VPC 미사용 콜드" />
+</MetricRow>
+
+<Callout tone="bad">
+  <strong>여전히 남은 함정</strong>: VPC 안 Lambda가 인터넷에 나가려면 NAT Gateway가 필요.
+  NAT GW가 없으면 외부 API 호출이 모두 실패. 해법은 NAT GW 또는 VPC Endpoint(AWS 서비스 한정).
+</Callout>
+
+### Cloud Run / Cloud Functions
+GCP의 서버리스도 비슷한 진화: Serverless VPC Connector → Direct VPC egress (2024~). 후자는 connector 없이 함수가 VPC에 직접 ENI.
+
+<Eyebrow>Direct Connect 심화</Eyebrow>
+
+## 전용선의 BGP·BFD·MACsec
+
+[Cloud-Net 페이지](/docs/advanced/cloud-net)의 BGP 패턴을 더 깊이:
+
+<KV>
+  <KVItem term="VIF (Virtual Interface)">
+    하나의 물리 회선 위에 여러 논리 인터페이스. <strong>Private VIF</strong>는 특정 VPC와 BGP 세션, <strong>Public VIF</strong>는 AWS 공용 서비스(S3 등) prefix를 받음. <strong>Transit VIF</strong>는 TGW와 한 번에 연결.
+  </KVItem>
+  <KVItem term="BFD (Bidirectional Forwarding Detection)">
+    BGP 타이머(<strong>Direct Connect 기본 keepalive 30s / hold 90s</strong>; 일반 BGP RFC 기본은 60/180)는 페일오버에 너무 느림. BFD는 300ms 간격 × 3 multiplier로 ~900ms에 회선 죽음 감지 → BGP 세션 다운 → 백업 회선으로 즉시 전환. 페일오버 ~1초.
+  </KVItem>
+  <KVItem term="MACsec (802.1AE)">
+    물리 회선의 L2 암호화. 데이터센터 임차 회선에서 도청 우려가 있는 환경. <strong>Dedicated Connection(1/10/100 Gbps)에서만</strong> 지원, Hosted Connection은 불가. 회선 끝단의 스위치가 처리하므로 호스트 CPU 부담 없음.
+  </KVItem>
+  <KVItem term="LAG (Link Aggregation Group)">
+    여러 회선을 묶어 대역폭 합산 + 한 회선 장애 시 자동 fallback. 802.3ad LACP. 4×10 Gbps = 40 Gbps + 1 회선 죽어도 30 Gbps 유지. <strong>주의: LAG는 한 물리 위치 묶음</strong>이라 진짜 이중화는 별 위치(다른 building/POP)에 별도 회선이 필요.
+  </KVItem>
+  <KVItem term="Dedicated vs Hosted">
+    <strong>Dedicated</strong>: 1/10/100 Gbps 전용 회선, MACsec/대용량 가능. <strong>Hosted</strong>: 파트너가 잘게 나눠 판매(50 Mbps~10 Gbps), 빠른 프로비저닝·저비용 but MACsec 불가.
+  </KVItem>
+</KV>
+
+### 이중화 패턴: Resilience 권장
+
+<DataTable>
+  <thead><tr><th>등급</th><th>구성</th><th>SLA·복원</th></tr></thead>
+  <tbody>
+    <tr><td>Maximum</td><td>2개의 다른 location × 2개 device = 4 회선</td><td>99.99%. AWS Resilience Toolkit 자동 검증</td></tr>
+    <tr><td>High</td><td>2 location × 1 device = 2 회선</td><td>99.9%. 한 위치 장애 견딤</td></tr>
+    <tr><td>Development</td><td>1 location × 2 device = 2 회선</td><td>99.9%. device 장애만 견딤</td></tr>
+    <tr><td>None</td><td>1 회선</td><td>유지보수 시 단절: 운영 부적합</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>DDoS chain</Eyebrow>
+
+## 엣지에서 origin까지의 다층 방어
+
+```
+[Attacker botnet]
+       │
+       ▼
+[AWS Edge (CloudFront / GA)]  ← Anycast로 트래픽 분산 흡수
+       │ Shield Standard / Advanced
+       │ AWS WAF (L7 rule, bot control)
+       ▼
+[Application Load Balancer]   ← idle timeout, max headers, rate limit
+       │
+       ▼
+[EC2 / EKS Pod / Lambda]      ← SG에서 LB SG만 inbound 허용
+```
+
+### 각 층의 역할
+
+<KV>
+  <KVItem term="CloudFront / Global Accelerator">
+    Anycast로 전 세계 엣지가 같은 IP를 받음. L3/L4 DDoS는 엣지가 흡수: origin에 닿지 않음. CloudFront는 SYN cookie·UDP 거부·HTTP 정상화까지 자동.
+  </KVItem>
+  <KVItem term="AWS Shield Standard">
+    모든 AWS 계정 기본 적용. SYN flood·UDP reflection·일반적인 L3/L4 공격을 자동 완화.
+  </KVItem>
+  <KVItem term="AWS Shield Advanced">
+    유료(<strong>$3,000/월 + 24개월 commit</strong> + 데이터 요금). 24/7 DRT(DDoS Response Team) 지원, <strong>cost protection</strong>(공격으로 늘어난 청구 환불: 가장 큰 실질 가치), Route 53·CloudFront·ALB 통합 모니터링. 작은 회사엔 비싸지만 DDoS 한 번 맞으면 ROI 즉시 회수.
+  </KVItem>
+  <KVItem term="AWS WAF">
+    L7 룰. SQLi·XSS 시그니처, Bot Control, Rate-based rule, GeoBlock, IP reputation. CloudFront/ALB/API GW에 부착. <strong>WCU(Web ACL Capacity Unit) 한도 5,000 per Web ACL</strong>: 룰이 무겁거나 많으면 ACL 분할이 필요.
+  </KVItem>
+  <KVItem term="Origin Shield">
+    CloudFront 캐시 계층화의 상위. 같은 콘텐츠 미스가 origin에 폭격되는 걸 한 번 더 흡수.
+  </KVItem>
+</KV>
+
+<Callout tone="bad">
+  <strong>아키텍처 핵심</strong>: origin EC2/Pod의 SG는 인터넷에서 직접 inbound를 받지 <strong>않아야</strong> 함.
+  CloudFront → ALB만 허용. CloudFront의 <code>AWS-managed prefix list</code> 또는 custom header (<code>X-Origin-Token</code>) 검증으로 우회 차단.
+</Callout>
+
+<Eyebrow>Cross-account</Eyebrow>
+
+## 대규모 조직의 네트워크 통합
+
+수십~수백 개 AWS 계정을 운영하는 회사는 네트워크 자체를 *어떻게 한 곳에서 통제하느냐*가 가장 큰 과제.
+
+<Callout tone="bad">
+  <strong>peering의 함정: non-transitive.</strong>
+  A↔B, B↔C 두 peering이 있어도 A↔C 자동 통신 불가. peering은 점-점 관계. 그래서 5개 VPC를 fully meshed로 잇는 데 10개 peering이 필요하고, 100개 VPC면 4,950개. <strong>이게 Transit Gateway가 존재하는 이유</strong>: 허브-스포크로 N개 VPC를 N개 attachment에 묶음.
+</Callout>
+
+<KV>
+  <KVItem term="AWS Organizations">
+    계정을 OU(Organizational Unit)로 묶고 SCP(Service Control Policy)로 권한·리전 강제. Landing Zone의 토대.
+  </KVItem>
+  <KVItem term="RAM (Resource Access Manager)">
+    중앙 계정의 VPC·서브넷·TGW·PrivateLink를 다른 계정과 공유. 각 계정에서 마치 자기 자원처럼 사용. 핵심: 중복 인프라 회피.
+  </KVItem>
+  <KVItem term="Hub-and-spoke (TGW)">
+    중앙 네트워크 계정에 TGW·NAT GW·DNS·SIEM 집중. 워크로드 계정은 자기 VPC + TGW attachment만. <strong>TGW 한도: 리전당 attachment 5,000개, route table 20개</strong>: 대규모 운영에서 자주 부딪침.
+  </KVItem>
+  <KVItem term="Private Hosted Zone 공유">
+    Route 53 PHZ를 여러 VPC와 연관(association). 모든 계정의 워크로드가 같은 내부 도메인 사용.
+  </KVItem>
+  <KVItem term="Network Firewall">
+    중앙 계정에 stateful 방화벽(Suricata 호환 룰). 모든 워크로드 계정의 인터넷 egress가 여기 경유: DNS·도메인 화이트리스트로 통제.
+  </KVItem>
+  <KVItem term="PrivateLink for cross-account 서비스">
+    한 계정의 NLB를 PrivateLink Endpoint Service로 노출, 다른 계정이 endpoint 연결. CIDR 충돌·peering 부담 없음.
+  </KVItem>
+</KV>
+
+<Callout>
+  <strong>패턴</strong>: "Landing Zone" + "Control Tower"가 이걸 자동화. SCP(Service Control Policy)로 워크로드 계정이 네트워크 자원을 임의 생성하지 못하도록 강제.
+</Callout>
+
+<Eyebrow>Limits & Quotas</Eyebrow>
+
+## 면접에서 묻는 "capacity planning" 숫자
+
+<DataTable>
+  <thead><tr><th>리소스</th><th>기본 한계</th><th>증액 가능?</th><th>운영 함정</th></tr></thead>
+  <tbody>
+    <tr><td>VPC당 IP 수</td><td>/16 = 65,534</td><td>/16 추가 가능 (secondary CIDR 최대 5개)</td><td>K8s 클러스터가 IP 빠르게 소모</td></tr>
+    <tr><td>리전당 VPC</td><td>5</td><td>예 (~수십)</td><td>대규모 조직은 수백 VPC, RAM 공유 활용</td></tr>
+    <tr><td>인스턴스당 ENI</td><td>인스턴스 타입별 (t3.medium 3, m5.24xlarge 15)</td><td>아니오 (하드 한계)</td><td>EKS Prefix Delegation으로 우회</td></tr>
+    <tr><td>ENI당 사설 IP</td><td>인스턴스 타입별 (t3 6, m5 10, m5.24xlarge 50)</td><td>아니오</td><td>위와 같음</td></tr>
+    <tr><td>SG당 룰</td><td>60 (in + out 합산 120)</td><td>예 (최대 1,000)</td><td>큰 prefix list가 더 효율적</td></tr>
+    <tr><td>인스턴스당 SG</td><td>5</td><td>예 (최대 16)</td><td>SG 참조 깊이 제한도 있음</td></tr>
+    <tr><td>NAT Gateway 처리량</td><td>5 Gbps → 100 Gbps 자동 확장</td><td>—</td><td>단일 흐름은 ~5 Gbps</td></tr>
+    <tr><td>NAT Gateway 포트</td><td>EIP당 65,535</td><td>EIP 추가 (최대 8)</td><td>같은 dst:port로 폭주 시 SNAT 포트 고갈</td></tr>
+    <tr><td>ALB 동시 연결</td><td>제한 없음 (LCU 단위 과금)</td><td>—</td><td>idle timeout 60s 기본: 늘리면 ENI 메모리 증가</td></tr>
+    <tr><td>TGW attachment</td><td>5,000</td><td>예</td><td>큰 조직에서도 거의 안 닿음</td></tr>
+    <tr><td>Route 53 zone당 record</td><td>10,000</td><td>예</td><td>큰 조직은 서브 zone으로 분할</td></tr>
+    <tr><td>Lambda 동시 실행</td><td>리전당 1,000</td><td>예 (대폭)</td><td>VPC 통합 시 ENI 풀 한계도 같이 봐야</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  <strong>운영 함정 Top 3</strong>:<br/>
+  • EKS 노드의 ENI/IP 한계: 노드는 한가한데 새 파드를 못 띄움<br/>
+  • NAT GW의 SNAT 포트 고갈: 같은 외부 API를 폭주 호출하면 발생, EIP 추가로 완화<br/>
+  • conntrack 한계: Linux 기본 ~262K 흐름, NAT 노드는 4M까지 늘려야
+</Callout>
+
+<Eyebrow>지표 정의</Eyebrow>
+
+## RTO / RPO
+
+<KV>
+  <KVItem term="RTO (Recovery Time Objective)">장애에서 복구까지 걸려도 되는 *시간*. "5분 안에 복구"가 RTO 5분.</KVItem>
+  <KVItem term="RPO (Recovery Point Objective)">복구 시점에서 잃어도 되는 *데이터 양*. 마지막 백업 30초 전이면 RPO 30초.</KVItem>
+  <KVItem term="DNS TTL의 함정">Route 53 health check 페일오버에서 60~300초가 사라지는 건 ALB 내부가 아니라 <strong>DNS resolver의 캐시 TTL</strong> 때문. 진짜 빠른 페일오버는 Global Accelerator(BGP Anycast, ~10초)나 Route 53 health check + evaluate target health 옵션 조합으로 단축.</KVItem>
+</KV>
+
+<Eyebrow>Multi-Region</Eyebrow>
+
+## 활성-수동 vs 활성-활성
+
+<PCBox>
+  <PC tone="good" title="활성-수동 (Pilot Light / Warm Standby)">
+    <ul>
+      <li>주 리전이 트래픽 받음. 보조 리전은 데이터 복제만</li>
+      <li>장애 시 Route 53 health check failover로 DNS 전환 (TTL 만큼 지연)</li>
+      <li>비용 ↓, RTO 분 단위, RPO 초~분</li>
+      <li>적합: 비용 민감, 글로벌 latency 무관</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="활성-활성 (Multi-Active)">
+    <ul>
+      <li>두 리전 모두 트래픽 받음. latency-based routing 또는 geolocation</li>
+      <li>장애 시 자동 트래픽 이동 (DNS·Global Accelerator)</li>
+      <li>비용 2배 + 데이터 일관성 모델 결정 (Aurora Global DB, DynamoDB Global Table)</li>
+      <li>적합: 글로벌 사용자, 엄격한 RTO/RPO</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Callout>
+  RTO 0 / RPO 0은 비용이 무한대로 갑니다. <strong>"RTO·RPO를 비즈니스가 얼마까지 허용 가능?"</strong>이 항상 첫 질문.
+  대부분 서비스는 RTO 5분 / RPO 1분이면 충분.
+</Callout>
+
+<Eyebrow>Hybrid / Multi-Cloud</Eyebrow>
+
+## 회피·트레이드오프
+
+업계의 솔직한 시각:
+
+- **Multi-cloud는 절대다수 회사에 비용·복잡도가 가치보다 큼**. 진짜 이유는 보통 (a) 단일 벤더 lock-in 우려, (b) M&A로 떠안은 다른 클라우드, (c) 데이터 거주 요건.
+- **Hybrid (온프레미스 + 클라우드)는 현실**: 대부분의 엔터프라이즈가 점진 마이그레이션 중.
+- 핵심 결정 포인트는 **identity federation**(SAML/OIDC로 한 디렉토리에서 양쪽 인증)과 **네트워크 통합**(Direct Connect/ExpressRoute로 백본 연결).
+- 데이터 중력(data gravity): 큰 데이터를 옮기기 어려워 그 옆에 컴퓨트가 모임. 한 클라우드 안에서도 리전 간 동일.
+
+### Multi-cloud가 정답인 케이스 (소수지만 분명히 있음)
+
+<KV>
+  <KVItem term="데이터 거주 규제">EU GDPR Schrems II, 중국 사이버보안법, 한국 금융 망분리. 특정 리전에 한 클라우드 사업자가 부재하거나 정부 검증 부재 시 강제로 멀티 클라우드.</KVItem>
+  <KVItem term="SaaS 종속">예: BigQuery에 데이터 파이프라인 의존 → GCP 종속. Snowflake처럼 multi-cloud SaaS도 있지만 latency/비용 차 있음.</KVItem>
+  <KVItem term="GPU 공급 부족">2023~2024 H100/H200 부족으로 AI 회사들이 강제로 AWS+GCP+Azure 분산 발주. 공급 정상화 후엔 단일화 추세.</KVItem>
+  <KVItem term="협상 레버리지">큰 고객이 신규 계약 시 "타사 견적이 있다"를 들고 협상. 실제로 운영하진 않지만 *carry capability*만 유지.</KVItem>
+  <KVItem term="재해 복구 RTO 극단">한 클라우드 사업자의 광역 장애도 견뎌야 하는 일부 금융/방위. AWS us-east-1 같은 광역 장애 사례 이후 가끔 요구됨.</KVItem>
+</KV>
+
+<Eyebrow>Edge Compute 내부</Eyebrow>
+
+## V8 isolate vs Lambda microVM vs WASM
+
+[CDN · LB](/docs/advanced/cdn-lb)가 *운영 패턴*을 다룬다면, 본 페이지는 *런타임 내부* 분담입니다.
+
+<DataTable>
+  <thead><tr><th>런타임</th><th>격리</th><th>cold start 원인</th><th>제약</th></tr></thead>
+  <tbody>
+    <tr><td>Cloudflare Workers (V8 isolate)</td><td>sub-process, request-scoped</td><td>V8 isolate 초기화 (약 5ms)</td><td>CPU 10ms·req (paid 50ms), 128MB heap. Node.js 호환성 부분적</td></tr>
+    <tr><td>AWS Lambda (Firecracker microVM)</td><td>microVM (KVM 기반)</td><td>VM 부팅 + runtime + 사용자 코드 (100~300ms)</td><td>15분 max, 10GB heap. Provisioned Concurrency로 콜드 회피</td></tr>
+    <tr><td>WASM (Compute@Edge·Workers Wasm)</td><td>Wasmtime·Lucet sandbox</td><td>WASM module 초기화 (약 50µs)</td><td>WASI 인터페이스. syscall 제한, 메모리 격리</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  V8 isolate가 빠른 이유: *프로세스 단위*가 아니라 *V8 엔진 안의 격리된 컨텍스트*만 만들면 됨. Lambda는 *microVM + OS + runtime + code* 전체 초기화. 한 isolate에 수천 request을 처리해도 격리 유지 (Workers의 *single-tenant per request* 모델).
+</Callout>
+
+<KV>
+  <KVItem term="Lambda@Edge replication">코드가 *모든 region에 복제*. 가장 가까운 region에서 실행, region별 cold start 별도.</KVItem>
+  <KVItem term="Workers Smart Placement">자동으로 *origin과 가까운 PoP*에서 실행 (origin RTT가 클 때만). 2023+ 베타.</KVItem>
+  <KVItem term="WASM AOT compilation">Wasmtime은 AOT 컴파일된 native code를 캐시: cold start가 µs급인 이유.</KVItem>
+  <KVItem term="Cell-based isolation">Lambda는 *account 단위 cell*로 분리. 한 account의 폭주가 다른 account에 영향 0 (capacity isolation).</KVItem>
+</KV>
+
+<Eyebrow>면접 단골</Eyebrow>
+
+## 자주 묻는 질문
+
+- "NAT Gateway 한 대가 100 Gbps라는데, 한 EC2가 그걸 다 쓸 수 있나?" → 단일 흐름은 ~5 Gbps. 다중 흐름이어야 풀 활용.
+- "Lambda를 VPC에 넣으면 콜드 스타트가 왜 짧아졌나?" → Hyperplane ENI로 공유 ENI 풀 사용, 함수마다 ENI 만들지 않음.
+- "EKS 노드가 한가한데 파드가 더 안 뜬다." → ENI/IP 한계. 인스턴스 타입 확인 + Prefix Delegation 켜기.
+- "CloudFront에서 origin EC2를 어떻게 보호?" → SG에 CloudFront 매니지드 prefix list만 inbound 허용 + custom header 검증.
+- "Direct Connect 죽으면 자동 페일오버가 왜 느린가?" → BGP keepalive 기본 60s. BFD 추가로 ms 단위 감지.
+- "VPC peering vs PrivateLink, 언제 어느 걸?" → 양방향 + 여러 서비스 = peering/TGW. 단방향 서비스 노출 + CIDR 충돌 무관 = PrivateLink.
+- "조직 100개 AWS 계정의 네트워크 관리는?" → Landing Zone + RAM + 중앙 TGW + Network Firewall.
+- "Multi-AZ ALB가 한 AZ 죽으면?" → 다른 AZ로 자동 분산. DNS의 AZ별 A 레코드 중 죽은 IP가 제외됨 (60~300s).
+- "활성-활성 multi-region에서 가장 어려운 건?" → 데이터 일관성. 동기 복제는 RTT 비용, 비동기는 RPO≠0.

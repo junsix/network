@@ -1,0 +1,359 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "15 · Rate Limit",
+  title: "Rate Limiting",
+  subtitle: (
+    <>
+      <Accent>흐름을 제한</Accent>하는 알고리즘
+    </>
+  ),
+  lead: (
+    <>
+      API gateway · CDN · service mesh 운영의 기본 어휘. 알고리즘 선택은 트레이드오프가 명확하며,
+      *분산 환경에서 카운터를 어떻게 공유할 것인가*가 진짜 어려운 문제입니다.
+      "burst를 허용하면서 평균은 막는다"라는 한 줄로 시작해 thundering herd와 fairness까지 이어집니다.
+    </>
+  ),
+};
+
+<Eyebrow>왜</Eyebrow>
+
+## 제한하는 네 가지 이유
+
+<KV>
+  <KVItem term="용량 보호">backend가 견딜 수 있는 RPS 위는 받아도 504로 떨어짐. 미리 거절하는 게 *덜 비싼* 실패.</KVItem>
+  <KVItem term="공정 분배">한 클라이언트가 모든 자원을 차지하지 못하게. multi-tenant 서비스의 기본.</KVItem>
+  <KVItem term="abuse 방어">스크래핑·credential stuffing·spam을 임계 위에서 잘라냄.</KVItem>
+  <KVItem term="비용 통제">downstream API(외부 결제·SMS)가 사용량 과금이면 자체 cap 필요.</KVItem>
+</KV>
+
+<Eyebrow>알고리즘</Eyebrow>
+
+## 네 가지 기본 알고리즘
+
+<DataTable>
+  <thead><tr><th>알고리즘</th><th>핵심</th><th>장점</th><th>단점</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Token Bucket</strong></td><td>버킷에 r req/s 비율로 토큰 채움, 용량 B. 요청은 토큰 1개 소비</td><td>burst B 허용·평균 r 보장·구현 단순</td><td>burst 직후 backend 스파이크</td></tr>
+    <tr><td><strong>Leaky Bucket</strong></td><td>큐에 요청 쌓고 일정 속도로 *출력*</td><td>출력 평탄·downstream 보호</td><td>burst 흡수 못함(큐 차면 거절)</td></tr>
+    <tr><td><strong>Fixed Window</strong></td><td>1분당 N 카운트, 분 경계마다 리셋</td><td>구현 가장 단순·메모리 최소</td><td>경계 직전+직후 2N burst</td></tr>
+    <tr><td><strong>Sliding Window (log)</strong></td><td>각 요청 timestamp 저장, 윈도우 안 카운트</td><td>정확한 비율</td><td>요청당 메모리 1 entry · 비쌈</td></tr>
+    <tr><td><strong>Sliding Window (counter)</strong></td><td>이전 윈도우 카운트 × 잔여 비율 + 현재 카운트</td><td>근사·메모리 적음</td><td>스파이크 패턴엔 부정확</td></tr>
+    <tr><td><strong>GCRA</strong></td><td>Generic Cell Rate Algorithm. TAT(theoretical arrival time)만 저장</td><td>메모리 1 timestamp·정확·burst tolerance 파라미터화</td><td>이해 진입장벽</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  Cloudflare·Stripe API가 **GCRA**로 옮긴 이유: token bucket과 동등한 의미를 *상태 1 timestamp*로 표현 가능 → Redis 단일 키로 분산 운영이 가벼움.
+</Callout>
+
+<Callout>
+  <strong>GCRA가 token bucket과 어떻게 같은지 (직관)</strong>. "버킷에 N개 토큰" 상태를 *"다음 요청이 허용되는 가상 시각 TAT"* 로 변환한 것. 토큰 가득 차면 TAT = 현재 시각(즉시 통과). 1개 소비할 때마다 TAT가 <code>period</code>만큼 미래로 이동. <code>burst_tolerance</code>만큼 미래로 가도 허용. 즉 *상태가 timestamp 1개*. 토큰 카운터 대신 시계 한 점만 추적: 분산에서 한 키만 atomic 갱신하면 됨.
+</Callout>
+
+<Eyebrow>의사 코드</Eyebrow>
+
+## Token Bucket과 GCRA
+
+```python
+# Token Bucket (전통)
+def allow(key, capacity=10, refill_rate=5):
+    now = time.time()
+    state = redis.hgetall(key)
+    tokens = float(state.get("tokens", capacity))
+    last = float(state.get("ts", now))
+    # 경과 시간만큼 토큰 충전
+    tokens = min(capacity, tokens + (now - last) * refill_rate)
+    if tokens >= 1:
+        tokens -= 1
+        redis.hset(key, {"tokens": tokens, "ts": now})
+        return True
+    redis.hset(key, {"tokens": tokens, "ts": now})
+    return False
+```
+
+```python
+# GCRA: TAT 한 값으로
+def allow_gcra(key, period=0.2, burst_tolerance=2.0):
+    # period = 1 / rate, burst_tolerance = 허용 가능 burst (초)
+    now = time.time()
+    tat = float(redis.get(key) or 0)
+    new_tat = max(tat, now) + period
+    if new_tat - now <= burst_tolerance:
+        # TTL은 max(period, burst_tolerance) × 2: period > burst_tolerance면
+        # int(burst_tolerance)+1로는 다음 정당한 요청 전 TAT 만료 → burst 우회.
+        ttl = int(max(period, burst_tolerance) * 2) + 1
+        redis.set(key, new_tat, ex=ttl)
+        return True
+    # Retry-After는 *델타*(초). 절대 시각 아님 (RFC 9110).
+    retry_after = max(0, (new_tat - burst_tolerance) - now)
+    return False  # 응답 헤더: Retry-After: {int(retry_after)}
+```
+
+<Callout tone="bad">
+  위 의사 코드는 *원자성*이 없음 (get·계산·set 사이 race). 운영에선 반드시 Redis **Lua 스크립트**(Redis는 *single-threaded*라 한 스크립트 안 모든 명령이 *원자적 실행* 보장) 또는 <code>SET ... NX</code>로 감싸야 함. Stripe·GitHub의 공개 구현 참조.
+</Callout>
+
+<Eyebrow>분산</Eyebrow>
+
+## 멀티 노드에서 카운터 공유
+
+API gateway가 N대로 scale-out된 환경에선 카운터를 어디에 둘 것인가가 진짜 어려움.
+
+<PCBox>
+  <PC tone="good" title="중앙 Redis (가장 흔함)">
+    <ul>
+      <li>모든 게이트웨이가 Redis에 Lua로 atomic 갱신</li>
+      <li>정확도 ↑, 단 Redis가 SPOF · 추가 RTT</li>
+      <li>샤딩으로 hot key 분산 가능 (key + tenant_id)</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="Local + gossip 동기화">
+    <ul>
+      <li>각 노드가 *자기 몫*만 카운팅. 주기적 <strong>gossip</strong>(노드끼리 1초마다 랜덤 다른 노드에 자기 카운터 전파. log(N)번이면 전체 클러스터 도달)으로 합산</li>
+      <li>정확도 ↓ 약간, latency 0 추가, Redis 없음</li>
+      <li>Cloudflare가 edge에서 사용 (수천 edge)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Sticky session">
+    <ul>
+      <li>같은 클라이언트는 같은 게이트웨이로: 로컬 카운터만 봄</li>
+      <li>fail-over 시 카운터 손실·재시작 시 burst 가능</li>
+      <li>운영급에 비추천</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="DB row 카운터">
+    <ul>
+      <li>매 요청마다 DB INCR → DB가 곧장 병목</li>
+      <li>대량 트래픽엔 부적합. 백오피스용에만.</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>응답</Eyebrow>
+
+## 거절 응답의 표준
+
+<DataTable>
+  <thead><tr><th>상태</th><th>의미</th><th>언제</th></tr></thead>
+  <tbody>
+    <tr><td><code>429 Too Many Requests</code></td><td>*당신*이 한계 초과</td><td>per-client limit 초과</td></tr>
+    <tr><td><code>503 Service Unavailable</code></td><td>*서버*가 과부하</td><td>global capacity 초과</td></tr>
+    <tr><td><code>Retry-After: 60</code></td><td>"60초 뒤 다시"</td><td>429·503 모두 권장</td></tr>
+  </tbody>
+</DataTable>
+
+표준 응답 헤더 (IETF draft + de facto):
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+RateLimit-Limit: 100
+RateLimit-Remaining: 0
+RateLimit-Reset: 60
+X-RateLimit-Resource: api.users
+```
+
+<Callout>
+  <code>Retry-After</code>가 정확해야 클라이언트가 *jittered backoff*로 협력. 안 주거나 거짓이면 클라이언트가 즉시 재시도 → thundering herd.
+</Callout>
+
+<Eyebrow>Thundering Herd</Eyebrow>
+
+## 동시 재시도 폭풍 회피
+
+거절당한 N개 클라이언트가 정확히 같은 시각에 재시도하면 *bursting 거절*이 영원히 반복 (oscillation).
+
+<Steps>
+  <li><strong>Jittered backoff</strong>: <code>delay = base × 2^attempt × random(0.5, 1.5)</code></li>
+  <li><strong>AWS full jitter</strong>: <code>delay = random(0, base × 2^attempt)</code> : 동시성 가장 효과적으로 분산</li>
+  <li><strong>Decorrelated jitter</strong>: <code>delay = random(base, prev × 3)</code> : 진동 줄임</li>
+  <li><strong>Request coalescing</strong>: 같은 요청은 *하나만* backend로, 응답을 N에 broadcast</li>
+  <li><strong>Stampede prevention</strong>: 캐시 만료 시 *하나의 키*만 갱신 (probabilistic early expiration)</li>
+</Steps>
+
+<Callout tone="bad">
+  Redis 캐시 만료 직후 N개 요청이 동시에 origin 직격하는 사례 : *probabilistic early refresh* (e.g., XFetch) 또는 *lock-on-miss*로 단일화. 자세한 패턴은 <a href="/docs/advanced/reliability">신뢰성 패턴</a> 페이지의 stampede 섹션.
+</Callout>
+
+<Eyebrow>도구 비교</Eyebrow>
+
+## 어디서 어떻게
+
+<DataTable>
+  <thead><tr><th>도구</th><th>위치</th><th>알고리즘</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td>NGINX <code>limit_req</code></td><td>L7 reverse proxy</td><td>Leaky bucket</td><td>delay vs reject 선택·zone 단위</td></tr>
+    <tr><td>Envoy local rate limiter</td><td>service mesh (sidecar)</td><td>Token bucket</td><td>per-listener·per-route 로컬 cap</td></tr>
+    <tr><td>envoyproxy/ratelimit (Lyft)</td><td>외부 gRPC service</td><td>Fixed window (Redis INCR)</td><td>descriptor 기반 분산 cap, <code>denyOnFail</code> 토글</td></tr>
+    <tr><td>HAProxy <code>stick-table</code></td><td>L4/L7 LB</td><td>Sliding window</td><td>tracking table에 IP·세션 정보</td></tr>
+    <tr><td>Cloudflare Rate Limiting</td><td>edge (Anycast)</td><td>Sliding window</td><td>edge 단위 카운팅 + gossip 합산</td></tr>
+    <tr><td>AWS API Gateway · WAF</td><td>edge</td><td>Token bucket (per route·per key)</td><td>API key별·burst·throttle 분리</td></tr>
+    <tr><td>Istio EnvoyFilter</td><td>K8s mesh</td><td>local + global</td><td>per-pod local + Redis global</td></tr>
+    <tr><td>Stripe API</td><td>application</td><td>GCRA</td><td>Brandur Leach 블로그 공개; <code>{`RateLimit-*`}</code> 헤더 표준 모범</td></tr>
+    <tr><td>GitHub API</td><td>application</td><td>비공개 (토큰 버킷 계열 추정)</td><td><code>{`X-RateLimit-*`}</code> 헤더 모범; GraphQL은 <code>X-RateLimit-Cost</code>로 weighted</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>L4 vs L7</Eyebrow>
+
+## 어디서 자르나
+
+<PCBox>
+  <PC tone="good" title="L4 connection limit">
+    <ul>
+      <li>per-IP 동시 연결 수 cap (예: 100)</li>
+      <li>비용 가장 싸지만 NAT 뒤 N 사용자가 같은 IP면 unfair</li>
+      <li>L4 LB·iptables connlimit</li>
+    </ul>
+  </PC>
+  <PC tone="good" title="L7 application semantics">
+    <ul>
+      <li>JWT의 sub·API key·tenant_id 단위로 cap</li>
+      <li>경로별·메서드별 차등 (write가 read보다 비쌈)</li>
+      <li>최적이지만 매 요청 인증 디코드 비용</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Callout>
+  실무 패턴: *두 단계 cascade*. (1) L4에서 IP 단위 거친 cap (DDoS 1차), (2) L7에서 인증된 사용자 단위 정밀 cap. 둘이 다른 책임.
+</Callout>
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 흔히 만나는 실패 모드
+
+<PCBox>
+  <PC tone="bad" title="Hot key · 비대칭">
+    <ul>
+      <li>Redis 카운터 키가 한 곳(예: 가장 큰 고객)에 집중 → Redis 노드 1대 폭주</li>
+      <li>해결: 키 샤딩 (<code>user:{`{id}`}:shard:{`{rand 0..15}`}</code>) + 합산</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Clock skew">
+    <ul>
+      <li>분산 카운터의 timestamp가 노드 간 다르면 fixed-window 경계가 어긋남</li>
+      <li>NTP 동기화 + 같은 시계 소스 사용. window 크기 ≫ skew</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="False positive · Fairness">
+    <ul>
+      <li>버스트 트래픽이 정당한 사용자도 막음 (peak shopping)</li>
+      <li>tier별 limit (free·pro·enterprise) + soft limit (warning만)</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="Limit Header Cache 오염">
+    <ul>
+      <li>CDN이 429 응답 + <code>Retry-After</code>를 캐시하면 *다른 사용자*에게도 거절</li>
+      <li><code>Cache-Control: private, no-store</code> 또는 Vary by user 필수</li>
+    </ul>
+  </PC>
+</PCBox>
+
+<Eyebrow>Redis 장애 대응</Eyebrow>
+
+## Fail-open vs Fail-closed
+
+Rate limit의 가장 큰 운영 결정: *Redis가 죽으면 모든 요청을 통과시킬 것인가(fail-open) 거절할 것인가(fail-closed)?*
+
+<DataTable>
+  <thead><tr><th></th><th>Fail-open</th><th>Fail-closed</th></tr></thead>
+  <tbody>
+    <tr><td>Redis 장애 시</td><td>cap 없이 통과 (가용성 우선)</td><td>모두 거절 (보호 우선)</td></tr>
+    <tr><td>적합</td><td>가용성 SLO가 중요한 일반 API</td><td>보안 게이트웨이·인증·결제</td></tr>
+    <tr><td>대표</td><td>Stripe API</td><td>다수 보안 게이트웨이</td></tr>
+    <tr><td>도구 토글</td><td>envoyproxy/ratelimit <code>denyOnFail: false</code></td><td><code>denyOnFail: true</code></td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  시니어 면접 단골 질문. "Redis 죽으면 어떻게 됩니까?"에 답이 없으면 *즉시 감점*. 정답은 *결정의 근거*까지: "가용성 SLO가 높은 일반 API는 fail-open, 결제·인증은 fail-closed"식으로 *책임에 맞춰* 선택. 모니터링도 둘이 분리 (fail-open은 *통과 비율 알람*, fail-closed는 *거절 비율 알람*).
+</Callout>
+
+<Eyebrow>In-flight 제한</Eyebrow>
+
+## RPS vs Concurrency: Little's Law
+
+RPS만 제한하면 응답이 느려질 때 backend의 in-flight 요청 수가 *자동으로 차오른다*. 결국 메모리·DB 커넥션 풀이 먼저 깨진다.
+
+**Little's Law**: <strong>L = λ × W</strong> (in-flight = RPS × 응답 시간). 응답 W가 두 배 느려지면 in-flight L도 두 배.
+
+<KV>
+  <KVItem term="동시성 제한">in-flight cap 설정. 그 이상은 wait 또는 즉시 거절. backpressure가 자연스럽게 발생.</KVItem>
+  <KVItem term="Netflix concurrency-limits">Vegas-style adaptive limit. latency를 보고 동적 조정 (TCP 혼잡 제어 알고리즘 차용).</KVItem>
+  <KVItem term="Envoy adaptive_concurrency_filter">latency·error rate 기반 동적 cap. 정적 임계 튜닝 불필요.</KVItem>
+  <KVItem term="실무">두 단계 cascade: 거친 RPS cap (DDoS 1차) + 정밀 concurrency cap (backend 보호)</KVItem>
+</KV>
+
+<Eyebrow>적응형</Eyebrow>
+
+## Adaptive Rate Limiting (AIMD · graceful degradation)
+
+정적 cap은 트래픽 패턴이 변하면 따라가지 못한다. **AIMD** (Additive Increase Multiplicative Decrease, TCP 혼잡 제어와 같은 원리)를 차용해 cap을 동적으로 조정.
+
+<Steps>
+  <li>정상이면 cap을 *선형 증가* (예: 매 분 +1%)</li>
+  <li>backpressure 신호(latency 임계 초과, error rate, queue depth) 감지 시 cap을 *곱셈 감소* (×0.5)</li>
+  <li>Google "graceful degradation"·Netflix Vegas-style·Envoy adaptive concurrency가 이 패턴</li>
+</Steps>
+
+<Eyebrow>다중 리전</Eyebrow>
+
+## Multi-region active-active 카운터
+
+같은 사용자가 *여러 region*에 동시 접근하는 환경에서 글로벌 cap을 *완전 정확*하게 강제하는 건 합의 RTT 비용을 동반. 실무 패턴:
+
+<DataTable>
+  <thead><tr><th>전략</th><th>정확도</th><th>지연</th></tr></thead>
+  <tbody>
+    <tr><td>중앙 region에 카운터</td><td>완전 정확</td><td>cross-region RTT (수십~수백ms)</td></tr>
+    <tr><td>region별 sub-budget (예: 글로벌 1000 → us-east 600 / eu 400)</td><td>전체는 글로벌 cap 이하 보장</td><td>지역 RTT만</td></tr>
+    <tr><td>CRDT G-Counter로 region별 합산 (gossip)</td><td>약간 over (CRDT eventual)</td><td>지역 RTT</td></tr>
+    <tr><td>best-effort 글로벌 통계 + 거친 region cap</td><td>근사</td><td>지역 RTT</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  Stripe·Cloudflare 같은 글로벌 서비스는 *sub-budget* + *gossip 합산*의 hybrid. 완전 정확은 *너무 비싸서* 약간 over하더라도 가용성을 선택.
+</Callout>
+
+<Eyebrow>jitter 분류 + maxmemory</Eyebrow>
+
+## AWS jitter 정확 분류 + Redis 함정
+
+AWS Architecture 블로그(Marc Brooker, *Exponential Backoff And Jitter*)의 정식 분류:
+
+<DataTable>
+  <thead><tr><th>jitter 종류</th><th>공식</th><th>특징</th></tr></thead>
+  <tbody>
+    <tr><td>No jitter</td><td><code>delay = base × 2^attempt</code></td><td>동시 클라이언트 그대로 동기화: 폭주</td></tr>
+    <tr><td>Equal jitter</td><td><code>temp/2 + random(0, temp/2)</code> where <code>temp = base × 2^attempt</code></td><td>약한 분산</td></tr>
+    <tr><td><strong>Full jitter</strong></td><td><code>random(0, base × 2^attempt)</code></td><td>가장 효과적으로 동시성 분산. 대규모 클라이언트 권장</td></tr>
+    <tr><td><strong>Decorrelated jitter</strong></td><td><code>min(cap, random(base, prev × 3))</code></td><td>진동 줄임. <strong>cap 필수</strong> (없으면 무한 증가)</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  Redis <code>maxmemory-policy=allkeys-lru</code>이면 rate limit 키가 *eviction*되어 burst 우회 가능. <code>volatile-lru</code> + 명시적 TTL + dedicated rate-limit Redis 인스턴스가 정석.
+</Callout>
+
+<Eyebrow>자매 분담</Eyebrow>
+
+## 인접 페이지와의 경계
+
+<KV>
+  <KVItem term="신뢰성 패턴"><strong>circuit breaker · retry budget · stampede</strong>는 거기서. 본 페이지는 *cap 알고리즘 자체*.</KVItem>
+  <KVItem term="CDN · LB"><strong>edge에서의 rate limit·DDoS</strong>은 거기서. 본 페이지는 *어플리케이션 단위*.</KVItem>
+  <KVItem term="K8s 네트워킹"><strong>Envoy/Istio 구현</strong>은 거기서. 본 페이지는 *알고리즘 선택 근거*.</KVItem>
+  <KVItem term="HTTP"><strong>429·Retry-After 시맨틱</strong>은 거기서. 본 페이지는 *언제 쓰는지*.</KVItem>
+  <KVItem term="분산 합의"><strong>분산 카운터의 정확도 vs 가용성</strong> 결정의 토대.</KVItem>
+</KV>

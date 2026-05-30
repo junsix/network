@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BGP & 인터넷 라우팅 · net·viz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../../css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="../../index.html">net·viz</a></div>
+      <nav>
+        <a href="../../index.html">홈</a>
+        <a href="../layers.html">계층</a>
+        <a href="../arp.html">ARP</a>
+        <a href="../ip-routing.html">IP·라우팅</a>
+        <a href="../tcp-udp.html">TCP·UDP</a>
+        <a href="../dns.html">DNS</a>
+        <a href="../http.html">HTTP</a>
+        <a href="../tls.html">TLS</a>
+        <a href="../security.html">보안</a>
+        <a href="bgp.html" class="active-section">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <nav class="subnav" aria-label="심화 토픽">
+      <a href="bgp.html" class="active">BGP · 인터넷 라우팅</a>
+      <a href="cdn-lb.html">CDN · Anycast · LB</a>
+      <a href="quic.html">QUIC · 혼잡 제어</a>
+      <a href="vpn.html">VPN · IPsec · WireGuard</a>
+      <a href="auth.html">OAuth · OIDC · mTLS</a>
+      <a href="observability.html">관측 · eBPF · Mesh</a>
+    </nav>
+
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> 10 · Inter-Domain Routing</span>
+      <h1>BGP — <span class="accent">인터넷이라는 그물망</span>의 안내자</h1>
+      <p class="lead">
+        하나의 회사 안에서는 OSPF/IS-IS 같은 IGP가 최단 경로를 자동으로 찾아줍니다.
+        하지만 <strong>전 세계 7만 개가 넘는 자율 시스템(AS)</strong>을 가로지를 때는 그렇게 단순할 수 없습니다.
+        BGP는 "어디로 갈 수 있는지"가 아니라 "어디로 가게 해 줄 의지가 있는지"를 광고하는,
+        본질적으로 <strong>정책 기반(policy-based) 라우팅</strong> 프로토콜입니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">AS</span>
+      <h2>자율 시스템 — 인터넷의 구성 단위</h2>
+      <p>
+        AS는 단일한 라우팅 정책 아래 운영되는 네트워크의 묶음입니다.
+        ISP·대기업·클라우드 사업자가 각각 ASN(AS Number)을 받습니다 — Google은 AS15169, AWS는 AS16509, KT는 AS4766처럼.
+        인터넷은 결국 <strong>AS와 AS 사이의 그래프</strong>입니다.
+      </p>
+      <div class="metric-row">
+        <div class="metric"><span class="v">~75K</span><span class="k">활성 AS 수</span></div>
+        <div class="metric"><span class="v">~960K</span><span class="k">IPv4 prefix in DFZ</span></div>
+        <div class="metric"><span class="v">~200K</span><span class="k">IPv6 prefix in DFZ</span></div>
+        <div class="metric"><span class="v accent">~5 hops</span><span class="k">평균 AS path 길이</span></div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">위상</span>
+      <h2>peering · transit · IX</h2>
+      <p>
+        AS 사이의 관계는 보통 두 가지입니다.
+      </p>
+      <div class="pcbox">
+        <div class="pc good">
+          <h4>Peering (대등)</h4>
+          <ul>
+            <li>두 AS가 서로의 고객 트래픽을 무료로 교환</li>
+            <li>주로 비슷한 규모끼리, 비용·지연 절감</li>
+            <li>IX(Internet Exchange)에서 한 번에 여러 AS와 피어링 가능</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <h4>Transit (유료 위임)</h4>
+          <ul>
+            <li>작은 AS가 큰 AS에게 돈을 내고 "모든 곳으로 가는 길"을 빌림</li>
+            <li>Tier 1 AS는 transit을 사지 않고 서로 peering만으로 전 세계 도달 가능</li>
+            <li>대부분의 가정·기업은 ISP에게 transit을 구매</li>
+          </ul>
+        </div>
+      </div>
+      <p style="margin-top:14px;">
+        AS는 자기 고객의 prefix는 모든 이웃에게 광고하지만, 다른 곳에서 받은 광고를 또 다른 곳에 그대로 전달할지는 <strong>정책</strong>에 따라 다릅니다 — 그게 "transit을 제공한다"는 의미.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">eBGP vs iBGP</span>
+      <h2>두 가지 BGP 세션</h2>
+      <table>
+        <thead><tr><th></th><th>eBGP</th><th>iBGP</th></tr></thead>
+        <tbody>
+          <tr><td>대상</td><td>다른 AS와</td><td>같은 AS 내부 라우터끼리</td></tr>
+          <tr><td>TTL</td><td>보통 1 (직접 연결)</td><td>충분히 크게</td></tr>
+          <tr><td>광고 재전파</td><td>받은 경로를 이웃 eBGP에 다시 광고 가능 (정책에 따라)</td><td>iBGP에서 받은 경로는 다른 iBGP에 재전파 안 함 (루프 방지) → full-mesh / RR 필요</td></tr>
+          <tr><td>NEXT_HOP</td><td>광고 시 자신의 IP로 갱신</td><td>유지 (그래서 iBGP는 IGP로 next-hop이 도달 가능해야 함)</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        iBGP의 full-mesh를 피하기 위해 <strong>Route Reflector</strong>나
+        <strong>Confederation</strong>을 씁니다. 대형 AS에서 라우터 수가 수백 개에 달하면
+        N² 세션은 운영 불가능해지기 때문이죠.
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">애니메이션</span>
+      <h2>경로 광고와 변경</h2>
+      <p>
+        링크가 끊기면 BGP는 다른 이웃에게서 들은 경로로 갈아탑니다.
+        ▶ 버튼을 눌러 경로 광고가 어떻게 흐르고, 끊겼을 때 어떻게 우회하는지 따라가 보세요.
+      </p>
+
+      <div class="controls">
+        <button class="btn primary" id="bgpRun">▶ 경로 광고 & 재수렴</button>
+        <button class="btn" id="bgpReset">↺ 초기화</button>
+      </div>
+
+      <div class="diagram" style="padding:18px;">
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11.5px;color:var(--fg-muted);text-align:center;margin-bottom:10px;font-family:var(--font-mono);">
+          <div>AS65001<br/>고객</div>
+          <div>AS100<br/>(Tier 2)</div>
+          <div>AS200<br/>(Tier 1)</div>
+          <div>AS300<br/>(Tier 1)</div>
+          <div>AS65002<br/>고객 (prefix 1.2.3.0/24)</div>
+        </div>
+        <div class="lane" id="bgpLane">
+          <div class="nodes">
+            <div class="node">A1</div><div class="node">A100</div><div class="node">A200</div><div class="node">A300</div><div class="node">A2</div>
+          </div>
+        </div>
+        <div id="bgpLog" style="margin-top:12px;color:var(--fg-muted);font-size:13px;min-height:160px;font-family:var(--font-mono);"></div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">의사 결정</span>
+      <h2>Best Path Selection — 우선순위 사다리</h2>
+      <p>
+        BGP는 단순한 "거리 벡터"가 아닙니다. 동일한 prefix에 여러 경로가 들어왔을 때 다음 순서로 선택합니다 (Cisco 표준 기준).
+      </p>
+      <ol class="steps">
+        <li><strong>WEIGHT</strong> (Cisco 전용, 라우터 로컬) — 높을수록 선호</li>
+        <li><strong>LOCAL_PREF</strong> (AS 내부 정책) — 높을수록 선호. "나가는 트래픽"을 통제하는 주된 손잡이</li>
+        <li><strong>로컬 origin</strong> — 자체 광고 > aggregate > 학습된 경로</li>
+        <li><strong>AS_PATH length</strong> — 짧을수록 선호 (보통의 "거리")</li>
+        <li><strong>Origin type</strong> — IGP > EGP > Incomplete</li>
+        <li><strong>MED</strong> (Multi-Exit Discriminator) — 같은 이웃 AS의 여러 진입점 중 선호 표현. 낮을수록 선호</li>
+        <li><strong>eBGP > iBGP</strong></li>
+        <li><strong>IGP cost to NEXT_HOP</strong> — 낮을수록</li>
+        <li><strong>라우터 ID 최소</strong> (tie-break)</li>
+      </ol>
+      <div class="callout good">
+        실무에서 자주 만지는 두 손잡이는 <strong>LOCAL_PREF</strong>(나가는 트래픽 정책)과
+        <strong>AS_PATH prepend</strong>(들어오는 트래픽 유인 — 일부러 자기 AS 번호를 여러 번 붙여 경로를 길어 보이게 만들어 다른 경로를 선호하게 함).
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">보안</span>
+      <h2>BGP 하이재킹과 RPKI</h2>
+      <p>
+        BGP는 1989년 설계 당시 <strong>"이웃은 정직하다"</strong>를 전제했습니다.
+        그래서 누군가 "이 prefix는 내 거야"라고 광고하면, 그게 정말인지 검증할 수단이 거의 없었습니다.
+        실제로 2008년 파키스탄 ISP가 YouTube prefix를 잘못 광고해 전 세계 YouTube가 수 시간 끊긴 사고,
+        2018년 Amazon Route 53 prefix가 하이재킹돼 암호화폐 지갑 사용자가 피해를 본 사고 등이 있었습니다.
+      </p>
+      <div class="diagram">
+        <svg viewBox="0 0 900 220" role="img" aria-label="BGP 하이재킹 흐름">
+          <g font-family="JetBrains Mono" font-size="12">
+            <rect x="20" y="40" width="140" height="50" rx="10" fill="#1e4a3a" stroke="#5BD5A0" stroke-opacity="0.5"/>
+            <text x="90" y="62" text-anchor="middle" fill="#EDEDEF">정상 소유자</text>
+            <text x="90" y="80" text-anchor="middle" fill="#8A8F98" font-size="10">AS64500 · 1.2.3.0/24</text>
+
+            <rect x="20" y="130" width="140" height="50" rx="10" fill="#4a2030" stroke="#F1657A" stroke-opacity="0.6"/>
+            <text x="90" y="152" text-anchor="middle" fill="#EDEDEF">공격자 AS</text>
+            <text x="90" y="170" text-anchor="middle" fill="#8A8F98" font-size="10">동일 prefix 광고</text>
+
+            <rect x="700" y="80" width="160" height="60" rx="10" fill="#2a3070" stroke="#5E6AD2" stroke-opacity="0.5"/>
+            <text x="780" y="105" text-anchor="middle" fill="#EDEDEF">인터넷 라우터</text>
+            <text x="780" y="124" text-anchor="middle" fill="#8A8F98" font-size="10">짧은 AS_PATH 선호</text>
+
+            <defs>
+              <marker id="aB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#5BD5A0"/>
+              </marker>
+              <marker id="aBh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#F1657A"/>
+              </marker>
+            </defs>
+
+            <line x1="160" y1="65" x2="700" y2="100" stroke="#5BD5A0" stroke-width="2" marker-end="url(#aB)"/>
+            <text x="270" y="58" fill="#8A8F98">정상 광고 · path=64500</text>
+
+            <line x1="160" y1="155" x2="700" y2="120" stroke="#F1657A" stroke-width="2" marker-end="url(#aBh)" stroke-dasharray="4 3"/>
+            <text x="270" y="200" fill="#F1657A">위조 광고 · path=짧음 → 트래픽 흡수</text>
+          </g>
+        </svg>
+      </div>
+
+      <h3>RPKI — 누가 어떤 prefix를 광고할 수 있는가</h3>
+      <p>
+        RIR(지역 인터넷 레지스트리)가 ROA(Route Origin Authorization)를 발급합니다.
+        "AS64500은 1.2.3.0/24를 광고할 자격이 있다"를 디지털 서명으로 증명하는 것이죠.
+        ROV(Route Origin Validation)를 켠 라우터는 ROA와 맞지 않는 광고를 거부합니다.
+      </p>
+      <table>
+        <thead><tr><th>방어</th><th>대상</th><th>해결</th></tr></thead>
+        <tbody>
+          <tr><td>RPKI + ROV</td><td>잘못된 origin AS</td><td>가장 널리 배포됨, 효과 큼</td></tr>
+          <tr><td>BGPsec</td><td>AS_PATH 위조</td><td>경로 전체 서명, 채택은 낮음</td></tr>
+          <tr><td>IRR 필터</td><td>등록되지 않은 prefix</td><td>전통적 방법, RPKI와 병행</td></tr>
+          <tr><td>MANRS 가이드</td><td>업계 표준 행동</td><td>uRPF, 안티-스푸핑, 협력</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">실무</span>
+      <h2>오퍼레이터의 손잡이</h2>
+      <dl class="kv">
+        <dt>community</dt>
+        <dd>광고에 붙이는 태그. "no-export", "transit-customer" 등 정책을 자동화하는 메커니즘.</dd>
+        <dt>aggregation</dt>
+        <dd>여러 작은 prefix를 큰 prefix로 묶어 광고. 라우팅 테이블 크기와 광고 빈도를 줄임.</dd>
+        <dt>route flap damping</dt>
+        <dd>불안정한 경로(짧은 시간 내 광고/철회 반복)에 페널티를 줘 일시적으로 무시. 불안정 전파 차단.</dd>
+        <dt>GTSM</dt>
+        <dd>Generalized TTL Security Mechanism — eBGP 패킷의 TTL을 255로 강제해 원거리 공격자 차단.</dd>
+      </dl>
+    </section>
+
+    <p class="foot">다음 심화: <a href="cdn-lb.html">CDN · Anycast · 로드밸런싱 →</a></p>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    const lane = document.getElementById("bgpLane");
+    const log = document.getElementById("bgpLog");
+    const append = (m) => { const d = document.createElement("div"); d.textContent = "› " + m; log.appendChild(d); };
+    document.getElementById("bgpReset").onclick = () => { log.innerHTML = ""; lane.querySelectorAll(".pkt").forEach(p => p.remove()); };
+    document.getElementById("bgpRun").onclick = async () => {
+      log.innerHTML = "";
+      append("AS65002가 1.2.3.0/24 prefix를 transit provider AS300에 광고");
+      await NetViz.flyPacket(lane, { label: "UPDATE 1.2.3.0/24 path=[65002]", cls: "dns", duration: 1200, from: "right" });
+      append("AS300이 이웃 AS200에 재광고 (path에 자기 ASN 추가)");
+      await NetViz.flyPacket(lane, { label: "UPDATE path=[300, 65002]", cls: "dns", duration: 1100, from: "right" });
+      append("AS200이 AS100에 광고");
+      await NetViz.flyPacket(lane, { label: "UPDATE path=[200, 300, 65002]", cls: "dns", duration: 1100, from: "right" });
+      append("AS100이 자기 고객 AS65001에 광고. 이제 AS65001은 1.2.3.0/24로 가는 경로를 학습.");
+      await NetViz.flyPacket(lane, { label: "UPDATE path=[100, 200, 300, 65002]", cls: "dns", duration: 1100, from: "right" });
+      append("─── 링크 장애: AS200 ↔ AS300 끊김 ───");
+      append("AS200이 다른 이웃(미도시 AS250)을 통한 더 긴 경로로 재수렴");
+      await NetViz.flyPacket(lane, { label: "WITHDRAW (old path)", cls: "fin", duration: 1000, from: "right" });
+      await NetViz.flyPacket(lane, { label: "UPDATE path=[200, 250, 300, 65002] (longer)", cls: "dns", duration: 1200, from: "right" });
+      append("수렴 시간: 몇 초 ~ 수십 초 (BGP가 IGP보다 느린 이유 = 정책 평가가 무겁기 때문).");
+    };
+  </script>
+</body>
+</html>

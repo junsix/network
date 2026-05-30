@@ -1,0 +1,323 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { Diagram } from "@/components/ui/Diagram";
+import { KV, KVItem } from "@/components/ui/KV";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { MetricRow, Metric } from "@/components/ui/Metric";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "18 · Reliability Patterns",
+  title: "신뢰성 패턴",
+  subtitle: (
+    <>
+      <Accent>서킷브레이커 · 백오프 · hedged · SLO</Accent>의 실전
+    </>
+  ),
+  lead: (
+    <>
+      장애는 일어납니다. 시니어 면접에서 묻는 건 "장애를 막는 법"이 아니라
+      "장애가 일부에서 나도 시스템 전체가 무너지지 않게 하는 법"입니다.
+      여기서 다루는 패턴들이 분산 시스템 운영의 기본 어휘입니다.
+    </>
+  ),
+};
+
+<Eyebrow>전제</Eyebrow>
+
+## 장애의 분류
+
+모든 장애가 "다운"은 아닙니다. 시니어는 이 구분을 정확히 합니다:
+
+<KV>
+  <KVItem term="Fail-stop">컴포넌트가 멈추고 응답이 없음. 가장 다루기 쉬움: 헬스체크로 감지.</KVItem>
+  <KVItem term="Fail-slow / Gray failure">살아 있지만 평소보다 훨씬 느림. p99가 100ms → 5s. <strong>가장 위험.</strong></KVItem>
+  <KVItem term="Byzantine">잘못된 응답을 자신 있게 반환. 비트 플립, 코드 버그, 악의적 노드.</KVItem>
+  <KVItem term="Partial">일부 요청만 실패. 캐시 콜드·특정 사용자·특정 샤드.</KVItem>
+  <KVItem term="Correlated">"독립적"이라 가정한 컴포넌트들이 같이 죽음. 같은 AZ, 같은 CA, 같은 DNS 의존.</KVItem>
+</KV>
+
+<Callout tone="bad">
+  관측·알람 설계가 fail-stop 가정이면 fail-slow에서 무방비.
+  <strong>"트래픽은 들어오는데 사용자는 느리다"</strong>가 시니어 운영의 진짜 시험대.
+</Callout>
+
+<Eyebrow>재시도</Eyebrow>
+
+## 재시도: 약이자 독
+
+실패를 한 번 더 시도하는 건 가장 단순한 회복. 그러나 잘못 쓰면 **장애를 증폭**시킵니다.
+
+### Exponential backoff + jitter
+
+```
+시도 1: 즉시
+시도 2: 1초 후
+시도 3: 2초 후
+시도 4: 4초 후 (지수 증가)
+```
+
+이대로면 같은 시각에 시작한 모든 클라이언트가 같은 시각에 재시도 → **재시도 폭풍**. **jitter**(무작위 분산)를 더해야:
+
+```python
+delay = base * (2 ** attempt) * random.uniform(0.5, 1.5)
+```
+
+Google SRE 책의 **decorrelated jitter**가 표준:
+
+```python
+delay = min(cap, random.uniform(base, prev * 3))
+```
+
+### 어떤 오류에 재시도?
+
+<DataTable>
+  <thead><tr><th>오류</th><th>재시도?</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr><td>네트워크 타임아웃</td><td>예 (idempotent 한정)</td><td>일시적일 가능성</td></tr>
+    <tr><td>503 Service Unavailable</td><td>예 (Retry-After 헤더 존중)</td><td>서버가 명시적으로 일시적</td></tr>
+    <tr><td>500 Internal Error</td><td>제한적</td><td>서버 코드 버그일 수도: 백오프 길게</td></tr>
+    <tr><td>429 Too Many Requests</td><td>예 (Retry-After 필수)</td><td>속도 초과: 더 큰 백오프</td></tr>
+    <tr><td>4xx 일반</td><td>아니오</td><td>클라이언트가 잘못함, 재시도 무의미</td></tr>
+    <tr><td>POST 후 connection reset</td><td>주의</td><td>서버가 처리했을 수도: idempotency-key</td></tr>
+  </tbody>
+</DataTable>
+
+### Retry budget
+
+**Retry budget** (재시도 예산): 각 클라이언트가 최대 3회 재시도한다고 가정. 평소 1% 실패면 트래픽 +3%, 부담 무시 가능.
+**장애 시 50% 실패**면 트래픽 +150% → 다운된 서버를 더 때리는 꼴.
+
+해법: 재시도 비율을 메인 트래픽의 일정 비율로 캡(예: 10%). 그 이상은 재시도 안 함—일부 사용자는 실패해도 서비스 자체는 살아남음. Envoy의 <code>retry_budget</code>·gRPC의 retry policy·Linkerd의 <code>RetryBudget</code>이 표준 구현.
+
+분산 환경에선 retry budget을 *서비스 단위*로 둬야 함. 클라이언트 단위면 N개 클라이언트가 각자 10%를 쓰면 합산 100% 폭주.
+
+<Eyebrow>Circuit Breaker</Eyebrow>
+
+## 서킷브레이커: 빠른 실패로 보호하기
+
+다운된 서비스에 계속 요청 보내면:
+1. 매번 타임아웃 만료까지 기다림 (리소스 소진)
+2. 호출자도 응답 못 하고 같이 다운 (**cascading failure**)
+
+**서킷브레이커(circuit breaker)** 는 실패율이 임계를 넘으면 잠시 "차단" 상태로 가서 즉시 실패를 반환합니다. *bulkhead*와 함께 마이크로서비스 회복력의 두 기둥.
+
+<Steps>
+  <li><strong>CLOSED</strong>: 정상. 모든 요청 통과. 실패 카운트만 슬라이딩 윈도우에 기록.</li>
+  <li>실패율이 임계 초과 → <strong>OPEN</strong>으로 전환 (state transition).</li>
+  <li><strong>OPEN</strong>: 즉시 실패 (downstream 호출 0). 일정 시간 후 HALF_OPEN으로.</li>
+  <li><strong>HALF_OPEN</strong>: 시험 요청 N개만 통과. 성공이면 CLOSED, 실패면 다시 OPEN.</li>
+</Steps>
+
+<DataTable>
+  <thead><tr><th>파라미터</th><th>의미</th><th>전형 값</th></tr></thead>
+  <tbody>
+    <tr><td>실패율 임계</td><td>OPEN 트리거</td><td>50%</td></tr>
+    <tr><td>윈도우 크기</td><td>실패율 측정 모집단</td><td>50~100 요청 또는 10초</td></tr>
+    <tr><td>최소 호출 수</td><td>측정 시작 임계</td><td>20 (그 이하면 측정 안 함)</td></tr>
+    <tr><td>OPEN 유지 시간</td><td>HALF_OPEN까지 wait</td><td>30s~1m</td></tr>
+    <tr><td>HALF_OPEN 시험 수</td><td>회복 확인 요청 수</td><td>5~10</td></tr>
+    <tr><td>slow call 임계</td><td>응답 너무 느린 호출 = 실패로 분류</td><td>p99 × 3 또는 SLO</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout>
+  서킷브레이커 임계 설정은 어렵습니다. 너무 민감하면 정상 변동에 트립, 너무 둔하면 의미 없음.
+  Resilience4j · Polly · Hystrix(deprecated) · Envoy의 outlier detection 가이드: <strong>슬라이딩 윈도우 50회 중 50% 실패</strong>가 흔한 기본값.
+</Callout>
+
+<Callout tone="bad">
+  <strong>흔한 실수</strong>: 모든 downstream에 같은 임계 적용. 정상적으로 5% 실패하는 서비스(예: spam 검사)도 50% 임계로 묶으면 알람이 안 옴. *각 downstream별*로 baseline 측정 후 별도 임계.
+</Callout>
+
+<Eyebrow>Bulkhead</Eyebrow>
+
+## 벌크헤드: 한 곳 침수가 배 전체를 가라앉히지 않게
+
+여러 다운스트림 호출이 같은 스레드풀·커넥션풀을 공유하면, 한 다운스트림이 느려질 때 풀이 고갈되어 다른 다운스트림 호출까지 막힘.
+
+**벌크헤드(bulkhead)**: 다운스트림별로 풀을 분리.
+
+```
+[다운스트림 A] ← 풀 A (max 50)
+[다운스트림 B] ← 풀 B (max 50)
+[다운스트림 C] ← 풀 C (max 20)
+```
+
+A가 죽어 풀 A가 고갈돼도 B·C는 계속 동작.
+
+<KV>
+  <KVItem term="Thread pool bulkhead">전용 스레드풀. 격리는 강력하지만 풀당 메모리 비용.</KVItem>
+  <KVItem term="Semaphore bulkhead">동시성 카운터만. 가벼움. 같은 스레드 안에서 격리.</KVItem>
+  <KVItem term="Async / coroutine">스레드 비용 없이 동시성 제한. 현대 표준 (Go·Rust·Kotlin·async Python).</KVItem>
+  <KVItem term="Tenant-level bulkhead">multi-tenant 환경에서 *고객별*로 풀 분리: 한 고객 spike가 다른 고객에 영향 0.</KVItem>
+</KV>
+
+<Eyebrow>Thundering Herd</Eyebrow>
+
+## 동시 부하 폭풍 회피
+
+캐시 만료·서비스 재시작·재시도 동기화로 N개 요청이 *동시에* 같은 downstream을 때리는 패턴. **thundering herd** (또는 **cache stampede**).
+
+<DataTable>
+  <thead><tr><th>패턴</th><th>해법</th></tr></thead>
+  <tbody>
+    <tr><td>캐시 만료 동시 직격</td><td><strong>Lock-on-miss</strong>: 첫 miss만 origin 호출, 나머지는 결과 대기. 또는 <strong>probabilistic early expiration</strong> (XFetch): 만료 직전에 *확률적*으로 한 노드가 미리 refresh.</td></tr>
+    <tr><td>재시도 동기화</td><td><strong>Jittered backoff</strong>. 자세한 알고리즘은 <a href="/docs/advanced/rate-limiting">Rate Limiting</a>의 thundering herd 섹션.</td></tr>
+    <tr><td>서비스 재시작 burst</td><td><strong>Slow start</strong>: 새 인스턴스가 트래픽을 점진적으로(0%→100% 30초) 받기. K8s readiness gate + LB의 slow start 기능.</td></tr>
+    <tr><td>cron 동시 실행</td><td>cron 시각에 *random offset* 추가 (예: 0~120초). N대가 정각에 동시 시작 방지.</td></tr>
+    <tr><td>대량 클라이언트 reconnect</td><td>서버가 <code>Retry-After</code>를 *난수*로 응답하거나, 클라이언트가 jittered backoff. 자세한 도구 어휘는 <a href="/docs/advanced/rate-limiting">Rate Limiting</a>.</td></tr>
+  </tbody>
+</DataTable>
+
+<Callout tone="bad">
+  Twitter 2010 fail whale 시기의 대표 사례 : 캐시 노드 1대 장애 → 모든 클라이언트가 동시에 다른 캐시로 fallback → 그 캐시도 장애 → 도미노. **cascading failure**의 교과서 패턴.
+</Callout>
+
+<Eyebrow>Timeouts</Eyebrow>
+
+## 타임아웃은 다단계로
+
+호출자가 5초를 기다리는데 다운스트림이 10초를 기다리면, 다운스트림은 호출자가 이미 포기한 작업을 계속함: 리소스 낭비.
+
+**타임아웃 예산 전파**: 호출자가 남은 시간을 헤더로 전달, 다운스트림은 그보다 작은 자기 타임아웃 사용:
+
+```
+Frontend: 10s
+   └── Backend (deadline header: 9s): 7s
+         └── DB (deadline header: 6s): 5s
+```
+
+gRPC는 <code>deadline</code>이 표준. HTTP에선 <code>X-Request-Timeout</code> 같은 커스텀 헤더.
+
+<Eyebrow>Hedged requests</Eyebrow>
+
+## 꼬리를 자르는 법
+
+p99가 1초, 중앙값이 50ms이면: 가끔의 1초가 사용자 경험을 망침. **hedged request**: 일정 시간(예: 95th percentile = 200ms)이 지났는데 응답이 없으면 같은 요청을 다른 백엔드로 한 번 더 보냄. 먼저 오는 응답을 채택.
+
+<MetricRow>
+  <Metric value="-90%" label="p99 단축 (Google BigTable)" accent />
+  <Metric value="+5%" label="추가 부하 (200ms 후 발사)" />
+</MetricRow>
+
+<Callout>
+  hedged의 트레이드오프: 5% 정도 부하 증가로 p99를 극적으로 줄임.
+  그러나 멱등이 아닌 요청엔 위험: 둘 다 처리되면 중복.
+</Callout>
+
+<Eyebrow>로드 셰딩</Eyebrow>
+
+## 부하가 너무 크면 일부를 의도적으로 버린다
+
+용량 초과 시 모든 요청을 천천히 처리하면 다 같이 실패. 차라리 일부를 즉시 거부해 나머지를 정상 처리하는 게 낫습니다.
+
+<KV>
+  <KVItem term="Rate limit">고정 임계. <code>1000 req/s/client</code>식.</KVItem>
+  <KVItem term="Concurrency limit">동시 처리 중인 요청 수 제한 (Little's law 활용).</KVItem>
+  <KVItem term="Priority-based shedding">중요한 요청(인증·결제) 우선 처리, 낮은 우선순위(분석·배경 작업)부터 버림.</KVItem>
+  <KVItem term="Adaptive (AIMD)">큐 길이·지연을 보고 동적으로 임계 조정. Netflix concurrency-limits 같은 라이브러리.</KVItem>
+</KV>
+
+<Eyebrow>idempotency</Eyebrow>
+
+## 안전한 재시도의 전제
+
+재시도가 안전하려면 같은 요청이 두 번 처리돼도 결과가 같아야 합니다.
+
+- **GET·PUT·DELETE**: HTTP 의미상 멱등
+- **POST**: 보통 비멱등. 해법: 클라이언트가 **idempotency key**(UUID) 발급, 서버가 24시간 캐시
+- **DB 트랜잭션**: <code>INSERT … ON CONFLICT DO NOTHING</code>, 외부 키·고유 제약
+
+<Callout tone="bad">
+  Stripe·Square 같은 결제 API는 <code>Idempotency-Key</code> 헤더가 필수.
+  네트워크가 끊겨 응답을 못 받았을 때 재시도해도 두 번 결제되지 않게.
+</Callout>
+
+<Eyebrow>SLI · SLO · 에러 예산</Eyebrow>
+
+## 신뢰성의 단위 측정
+
+<KV>
+  <KVItem term="SLI (Service Level Indicator)">실제 측정되는 값. 예: "p99 응답 시간", "성공률".</KVItem>
+  <KVItem term="SLO (Service Level Objective)">SLI에 대한 목표. 예: "p99 ≤ 200ms를 30일 평균 99.9%".</KVItem>
+  <KVItem term="SLA (Service Level Agreement)">고객과의 계약. 어기면 환불·페널티. 보통 SLO보다 느슨.</KVItem>
+  <KVItem term="Error budget">SLO가 99.9%면 0.1%만큼은 실패해도 됨. 30일이면 약 43분. 다 쓰면 신기능 출시 동결.</KVItem>
+</KV>
+
+### 알람 디자인: burn rate
+
+"5분 동안 에러율 1% 초과"는 안티패턴:
+- 민감도 부족: 더 큰 사고도 5분 안에 다 못 잡음
+- 노이즈: 일시적 변동에 알람 폭주
+
+**Burn rate alert**(Google SRE 표준):
+- 단기 윈도우(5m) + 장기 윈도우(1h) 둘 다에서 SLO를 빠르게 소진하는 비율 초과 시 알람
+- "에러 예산을 평소보다 14배 빠르게 쓰고 있다"
+
+<Callout tone="good">
+  burn rate × 윈도우 길이의 두 단계 조합:<br/>
+  • Fast: 1h × 14.4 → 페이지 (2% 예산 1시간 만에 소진)<br/>
+  • Slow: 6h × 6 → 알림 (5% 예산 6시간에 소진)<br/>
+  단기·장기 둘 다 트리거되어야 알람: 일시적 spike 무시.
+</Callout>
+
+<Eyebrow>혼란 공학</Eyebrow>
+
+## 평소에 의도적으로 부수기
+
+장애를 진짜 장애 시간에 처음 만나는 건 늦습니다. **카오스 엔지니어링**: 평소에 통제된 환경에서 의도적으로 부숨.
+
+- **Netflix Chaos Monkey**: 인스턴스 무작위 종료
+- **AZ failure 훈련**: 한 AZ를 의도적으로 격리
+- **네트워크 지연 주입**: tc·toxiproxy로 100ms 지연 추가
+- **Game day**: 팀 전체가 정기적으로 가상 사고 대응
+
+<Eyebrow>SRE 운영 어휘</Eyebrow>
+
+## error budget · DORA · MTTR: 시니어가 쓰는 base vocabulary
+
+SLO를 *정의*하는 것과 *운영*하는 것은 다른 어휘를 씁니다.
+
+<KV>
+  <KVItem term="Error budget">SLO 99.9%면 0.1% = 한 달 43m 12s가 *허용 실패*. 그 시간 내에서 *위험 작업*(배포·실험)을 자유롭게. 다 쓰면 신기능 동결, 안정화 우선.</KVItem>
+  <KVItem term="Four Golden Signals">Google SRE 표준: <strong>Latency · Traffic · Errors · Saturation</strong>. RED(Rate·Errors·Duration, micro-services)·USE(Utilization·Saturation·Errors, hardware) 모델과 비교.</KVItem>
+  <KVItem term="MTTR · MTTD · MTBF">Mean Time To Recovery·Detect·Between Failures. 운영 KPI. MTTD를 줄이는 게 가장 큰 ROI (관측이 우선, 그다음 복구 자동화).</KVItem>
+  <KVItem term="DORA Four Keys">2018 DORA 보고서: <strong>Deployment frequency · Lead time for changes · Change failure rate · MTTR</strong>. Elite는 MTTR 1h 이내, low는 일~주 단위. 조직 성숙도 메트릭 표준.</KVItem>
+  <KVItem term="Blameless postmortem">개인 책임이 아닌 *시스템 결함*에 집중. action items + timeline + contributing factors. Google·Netflix·Etsy 표준.</KVItem>
+  <KVItem term="Toil 측정">반복적·수동적·자동화 가능한 운영 작업. SRE 시간의 50% 이내가 목표. 그 이상은 자동화·아키텍처 변경 신호.</KVItem>
+</KV>
+
+<Callout tone="bad">
+  <strong>MTTD를 측정 안 하면 MTTR이 거짓말</strong>. 사고가 5분 후 감지됐는데 *기록은 알람 떴을 때부터*면 MTTR이 실제보다 짧게 보임. 사고 timeline에 <strong>최초 사용자 영향 시각</strong>을 별도 기록. PagerDuty·incident.io 같은 도구가 이걸 자동 분리.
+</Callout>
+
+<Callout>
+  <strong>분담 명시</strong>: *이 페이지*가 *정의·운영 결정* (SLO·error budget·burn rate·DORA). <a href="/docs/advanced/observability">관측</a>이 *측정 구현* (SLI 추출·exemplars·trace·MTTR 측정 도구).
+</Callout>
+
+<Eyebrow>안티패턴</Eyebrow>
+
+## 자주 부딪치는 함정
+
+- **모든 호출에 같은 타임아웃 5초**: 다운스트림 트리가 깊으면 누적되어 의미 없음
+- **재시도를 모든 레이어에서**: A → B → C 호출 트리에서 각각 3회 재시도면 총 27회 → 폭주
+- **서킷브레이커 임계를 너무 낮게**: 정상 변동에도 OPEN, 가용성 ↓
+- **알람을 너무 많이**: 알람 피로 → 진짜 알람도 무시
+- **단일 헬스체크 = 알람**: 가용성을 SLO가 아니라 ping으로 측정
+- **재시도 폭주를 LB에서만 막기**: 클라이언트 사이드 backoff까지 보장해야
+- **fail-open 일변도**: 인증 실패 시 통과시키면 보안 사고. 케이스별 결정
+
+<Eyebrow>면접 단골</Eyebrow>
+
+## 자주 묻는 질문
+
+- "재시도 폭풍이 무엇? 어떻게 방지?" → cascading retry. retry budget·exponential backoff + jitter.
+- "p99 1초가 사용자에게 어떤 의미?" → 100개 요청 중 1개는 1초+. 페이지에 50개 요청 있으면 평균 사용자가 1초+ 1번 만남.
+- "SLO 99.99%는 얼마의 다운타임?" → 연 52분. 월 4분 16초. 분단위 동결 어려운 수치.
+- "Graceful degradation은 무엇?" → 일부 기능 실패 시 전체가 죽지 않고 핵심만 유지. 예: 추천 서비스 죽어도 메인 피드는 보임.
+- "Bulkhead가 thread pool로 쓰일 때 단점?" → 풀당 메모리 비용. async/coroutine 모델이 더 효율적.
+- "Hedged request의 위험은?" → 비멱등 요청에 중복. 부하 증가. tail latency가 안 좋은 서비스에선 오히려 악화.
+- "에러 예산이 다 떨어졌다. 어떻게 운영?" → 신기능 동결, 안정화 작업 우선. SRE-개발팀 사이의 비즈니스 룰.

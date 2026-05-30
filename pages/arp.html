@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ARP · net·viz</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../css/main.css" />
+</head>
+<body>
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-blob b1"></div>
+    <div class="bg-blob b2"></div>
+    <div class="bg-blob b3"></div>
+    <div class="bg-blob b4"></div>
+    <div class="bg-noise"></div>
+  </div>
+
+  <header class="topnav">
+    <div class="topnav-inner">
+      <div class="brand"><span class="dot"></span><a href="../index.html">net·viz</a></div>
+      <nav>
+        <a href="../index.html">홈</a>
+        <a href="layers.html">계층</a>
+        <a href="arp.html">ARP</a>
+        <a href="ip-routing.html">IP·라우팅</a>
+        <a href="tcp-udp.html">TCP·UDP</a>
+        <a href="dns.html">DNS</a>
+        <a href="http.html">HTTP</a>
+        <a href="tls.html">TLS</a>
+        <a href="security.html">보안</a>
+        <a href="advanced/bgp.html">심화</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow"><span class="pulse"></span> 02 · Data Link (L2)</span>
+      <h1>ARP — 같은 LAN에서 <span class="accent">"그 IP의 MAC"</span>을 찾기</h1>
+      <p class="lead">
+        IP는 L3 주소지만, 실제로 같은 링크에서 프레임을 보내려면 L2의 MAC 주소가 있어야 합니다.
+        ARP(Address Resolution Protocol)는 <code class="inline">IP → MAC</code> 매핑을
+        찾는 작은 프로토콜입니다. 단순한 만큼 인증이 없어 보안에는 약점이 됩니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">왜 필요한가</span>
+      <h2>스위치는 MAC으로만 전달한다</h2>
+      <p>
+        같은 스위치에 붙은 두 기기 A와 B가 있다고 합시다. A는 B의 IP는 알지만,
+        스위치는 이더넷 프레임을 MAC 주소로 전달합니다. 그래서 A는 먼저
+        "192.168.0.20을 가진 사람, 너의 MAC이 뭐야?"를 LAN 전체에 묻습니다.
+      </p>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">애니메이션</span>
+      <h2>ARP 흐름 따라가기</h2>
+      <div class="controls">
+        <button class="btn primary" id="arpRun">▶ ARP 질의 시작</button>
+        <button class="btn" id="arpReset">↺ 초기화</button>
+      </div>
+
+      <div class="diagram" style="padding:18px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;color:var(--fg-muted);font-size:12.5px;text-align:center;font-family:var(--font-mono);">
+          <div><span style="color:var(--fg);font-weight:600;">A</span><br/>192.168.0.10<br/>aa:aa</div>
+          <div><span style="color:var(--fg);font-weight:600;">스위치</span><br/>브로드캐스트 전달</div>
+          <div><span style="color:var(--fg);font-weight:600;">B</span><br/>192.168.0.20<br/>bb:bb</div>
+        </div>
+        <div class="lane" id="arpLane">
+          <div class="nodes">
+            <div class="node">A</div>
+            <div class="node">스위치</div>
+            <div class="node">B</div>
+          </div>
+        </div>
+        <div id="arpLog" style="margin-top:12px;color:var(--fg-muted);font-size:13px;min-height:60px;font-family:var(--font-mono);"></div>
+      </div>
+
+      <ol class="steps">
+        <li><strong>ARP Request (브로드캐스트)</strong>: A → ff:ff:ff:ff:ff:ff —
+          "Who has 192.168.0.20? Tell 192.168.0.10."</li>
+        <li><strong>스위치는 브로드캐스트</strong>이므로 같은 VLAN의 모든 포트로 복제 전달합니다.</li>
+        <li><strong>ARP Reply (유니캐스트)</strong>: B → A —
+          "192.168.0.20 is at bb:bb:bb:bb:bb:bb."</li>
+        <li><strong>A는 ARP 캐시에 저장</strong>하고, 다음 통신부터는 즉시 MAC을 알아봅니다.</li>
+      </ol>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">트레이드오프</span>
+      <h2>강점과 약점</h2>
+      <div class="pcbox">
+        <div class="pc good">
+          <h4>적합한 상황</h4>
+          <ul>
+            <li>같은 L2 도메인 안의 빠르고 단순한 주소 해석</li>
+            <li>캐시 기반이라 반복 통신에서 거의 오버헤드 없음</li>
+            <li>구현이 단순해 모든 OS·NIC에 기본 탑재</li>
+          </ul>
+        </div>
+        <div class="pc bad">
+          <h4>약점</h4>
+          <ul>
+            <li><strong>인증이 없다</strong>: 누구든 "내가 그 IP다"라고 응답 가능 → ARP 스푸핑</li>
+            <li>브로드캐스트라 큰 LAN에서는 트래픽 비용</li>
+            <li>L3를 넘지 못함 (라우터 너머의 IP는 ARP로 못 찾음 — 라우터의 MAC을 찾음)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">미리보기</span>
+      <h2>ARP 스푸핑 (Gratuitous ARP)</h2>
+      <p>
+        공격자 X가 묻지도 않았는데 "192.168.0.1(게이트웨이)은 내 MAC이야"라고
+        반복적으로 브로드캐스트하면, A의 ARP 캐시가 덮어쓰이면서 외부로 나가는
+        모든 트래픽이 X를 거쳐 가게 됩니다. 자세한 시각화는
+        <a href="security.html#arp-spoof">보안 페이지</a>에서 다룹니다.
+      </p>
+      <div class="callout bad">
+        ARP는 "마지막에 들은 응답을 믿는" 단순한 모델입니다. 그래서 신뢰할 수 없는
+        네트워크(공용 Wi-Fi 등)에서는 상위 계층 암호화(TLS)와 인증이 필수입니다.
+      </div>
+    </section>
+
+    <section class="section reveal">
+      <span class="tag-label">방어</span>
+      <h2>방어 옵션</h2>
+      <table>
+        <thead><tr><th>방법</th><th>어떻게</th><th>한계</th></tr></thead>
+        <tbody>
+          <tr><td>정적 ARP</td><td>핵심 호스트에 IP↔MAC을 고정</td><td>운영 비용·확장성 ↓</td></tr>
+          <tr><td>DAI (Dynamic ARP Inspection)</td><td>스위치가 DHCP snooping 결과와 비교해 위조 ARP 차단</td><td>DHCP·스위치 설정 의존</td></tr>
+          <tr><td>802.1X / 포트 보안</td><td>비인가 단말 자체를 LAN에 못 붙이게</td><td>인증 인프라 필요</td></tr>
+          <tr><td>L7 암호화</td><td>스푸핑돼도 내용은 못 읽게 (TLS)</td><td>경로 자체는 못 막음</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="foot">다음으로 추천: <a href="ip-routing.html">IP·라우팅 — LAN 밖으로 나가기 →</a></p>
+  </main>
+
+  <script src="../js/common.js"></script>
+  <script>
+    const lane = document.getElementById("arpLane");
+    const log = document.getElementById("arpLog");
+    function append(msg) {
+      const line = document.createElement("div");
+      line.textContent = "› " + msg;
+      log.appendChild(line);
+    }
+    document.getElementById("arpReset").onclick = () => {
+      log.innerHTML = "";
+      lane.querySelectorAll(".pkt").forEach((p) => p.remove());
+    };
+    document.getElementById("arpRun").onclick = async () => {
+      log.innerHTML = "";
+      append("A: 192.168.0.20의 MAC을 모름 → ARP Request 브로드캐스트");
+      await NetViz.flyPacket(lane, { label: "ARP Req · who-has 0.20?", cls: "syn", duration: 1400 });
+      append("스위치가 모든 포트로 복제 → B만 자기 IP라 응답");
+      await NetViz.flyPacket(lane, { label: "ARP Reply · 0.20 is bb:bb", cls: "ack", duration: 1400, from: "right" });
+      append("A의 ARP 캐시에 0.20 → bb:bb 저장 완료. 다음 통신부터 즉시 사용.");
+    };
+  </script>
+</body>
+</html>

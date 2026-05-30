@@ -1,0 +1,157 @@
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Callout } from "@/components/ui/Callout";
+import { PCBox, PC } from "@/components/ui/PCBox";
+import { Steps } from "@/components/ui/Steps";
+import { DataTable } from "@/components/ui/DataTable";
+import { KV, KVItem } from "@/components/ui/KV";
+import { Accent } from "@/components/layout/Hero";
+
+export const meta = {
+  eyebrow: "04.7 · Diagnostics",
+  title: "ICMP",
+  subtitle: (
+    <>
+      <Accent>패킷이 왜 안 가는지</Accent> 알려주는 신호
+    </>
+  ),
+  lead: (
+    <>
+      IP는 데이터를 운반합니다. 그런데 운반 도중 <em>문제가 생기면 누가 알려주나</em>. 그게 ICMP의 일입니다.
+      ping · traceroute의 토대이자 PMTUD · MTU 협상의 통신 채널. 막아두면 <em>이상한 timeout</em>이 시작됩니다.
+    </>
+  ),
+};
+
+<Eyebrow>왜 별도 프로토콜인가</Eyebrow>
+
+## IP는 운반만, 에러 신호는 ICMP
+
+IP는 best effort라 *왜* 도착 못 했는지 알려주지 않습니다. ICMP가 그 자리를 메웁니다: 라우터·호스트가 IP 처리 중 만나는 *경로 막힘 · TTL 소진 · MTU 초과* 같은 상황을 송신자에게 되돌려 알립니다. TCP / UDP 위가 아닌 *IP 위에 직접* 얹힙니다 (protocol number 1).
+
+<Eyebrow>Type · Code</Eyebrow>
+
+## 자주 보는 Type / Code
+
+<DataTable>
+  <thead>
+    <tr><th>Type</th><th>Code</th><th>의미</th><th>언제</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0</td><td>0</td><td>Echo Reply</td><td>ping 응답</td></tr>
+    <tr><td>3</td><td>0</td><td>Net Unreachable</td><td>대상 네트워크 없음</td></tr>
+    <tr><td>3</td><td>1</td><td>Host Unreachable</td><td>대상 호스트 무응답</td></tr>
+    <tr><td>3</td><td>3</td><td>Port Unreachable</td><td>UDP에서 포트 닫힘 (traceroute 마지막 hop)</td></tr>
+    <tr><td>3</td><td>4</td><td><strong>Fragmentation Needed</strong></td><td><strong>PMTUD 핵심</strong>: MTU 초과인데 DF bit 설정</td></tr>
+    <tr><td>5</td><td>0~3</td><td>Redirect</td><td>더 좋은 경로 알림 (보안 위험)</td></tr>
+    <tr><td>8</td><td>0</td><td>Echo Request</td><td>ping 보냄</td></tr>
+    <tr><td>11</td><td>0</td><td>Time Exceeded (TTL)</td><td>TTL 0 도달 (<strong>traceroute</strong>)</td></tr>
+    <tr><td>11</td><td>1</td><td>Time Exceeded (reassembly)</td><td>fragment reassembly timeout</td></tr>
+    <tr><td>12</td><td>0</td><td>Parameter Problem</td><td>IP 헤더 이상</td></tr>
+  </tbody>
+</DataTable>
+
+<Eyebrow>ping</Eyebrow>
+
+## Echo Request → Echo Reply
+
+`ping 8.8.8.8`이 보내는 건 Type 8. 받는 건 Type 0. 그게 전부입니다.
+
+<Steps>
+  <li>송신: ICMP Type 8 (Echo Request), payload에 timestamp + seq 번호</li>
+  <li>수신측 OS 커널이 *상위 계층 없이* Type 0 (Echo Reply)으로 즉시 응답</li>
+  <li>송신측이 RTT 계산, packet loss 집계</li>
+</Steps>
+
+ping이 안 가도 호스트가 다운인 건 아닙니다. 방화벽이 *ICMP Type 8을 막아둔* 경우가 많습니다. 호스트는 살아있고 TCP · UDP는 열려 있는데 ping만 안 됩니다.
+
+<Eyebrow>traceroute</Eyebrow>
+
+## TTL을 1씩 올려가며 경로 그리기
+
+traceroute는 *Type 11*을 이용한 절묘한 트릭입니다.
+
+<Steps>
+  <li>송신: TTL=1로 UDP / ICMP 송신. 첫 라우터에서 TTL=0이 되며 <strong>Type 11 (Time Exceeded)</strong> 응답</li>
+  <li>응답한 라우터 IP가 첫 hop</li>
+  <li>TTL=2로 다음 송신 → 두 번째 라우터가 Type 11 응답</li>
+  <li>... 대상 도달 시 마지막 hop은 다른 응답 (UDP면 Type 3 Code 3, ICMP면 Type 0)</li>
+</Steps>
+
+MTR (My Traceroute) 은 ping과 traceroute를 결합해 *지속적으로* 각 hop의 loss · RTT를 보여줍니다. 운영 시 어느 hop이 흔들리는지 파악에 가장 빠릅니다.
+
+<Eyebrow>PMTUD</Eyebrow>
+
+## Path MTU Discovery
+
+경로 중간 라우터의 MTU가 작으면 큰 패킷은 통과 못 합니다. 표준 동작:
+
+<Steps>
+  <li>송신자가 DF (Don't Fragment) bit를 켜고 송신</li>
+  <li>MTU 1500 인터페이스를 통과하다 MTU 1400 인터페이스를 만난 라우터가 차단</li>
+  <li>라우터가 <strong>ICMP Type 3 Code 4 (Fragmentation Needed)</strong> 응답 + 다음 hop MTU 동봉</li>
+  <li>송신자가 MTU 줄여 재전송</li>
+</Steps>
+
+문제는 *3단계 응답이 송신자에게 도달*해야 한다는 점입니다.
+
+<Callout tone="bad">
+  방화벽이 모든 ICMP를 차단해버리면 Type 3 Code 4도 막힙니다. 송신자는 *왜 패킷이 안 가는지 모른 채* 무한 재전송. 작은 패킷(HTTP 짧은 요청)은 가는데 *큰 응답(JSON 페이로드)*만 안 오는 증상. 이게 <strong>PMTUD blackhole</strong>.
+</Callout>
+
+대책 두 가지:
+- **TCP MSS clamping**: 라우터가 SYN의 MSS 옵션을 *작게 고쳐* 통과시킴. PMTUD를 우회.
+- **ICMP Type 3 Code 4는 통과시키기**: 방화벽 정책에서 *모든 ICMP 차단*은 안 됨. 최소 3/4는 열기.
+
+PPPoE (MTU 1492) · IPsec (MTU 1400) · 터널링 환경에서 특히 흔합니다. [PPPoE는 access-layer](/docs/access-layer#홈-인터넷의-다이얼업)에서 다룹니다.
+
+<Eyebrow>IPv6</Eyebrow>
+
+## ICMPv6
+
+IPv6에는 ICMP가 *더 중요*해집니다. ARP 자리를 ICMPv6 메시지가 메우기 때문입니다.
+
+<DataTable>
+  <thead>
+    <tr><th>Type</th><th>의미</th><th>역할</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Destination Unreachable</td><td>v4의 Type 3에 해당</td></tr>
+    <tr><td>2</td><td>Packet Too Big</td><td>v4의 PMTUD (Type 3 Code 4 대체)</td></tr>
+    <tr><td>3</td><td>Time Exceeded</td><td>v4의 Type 11</td></tr>
+    <tr><td>128 / 129</td><td>Echo Request / Reply</td><td>v4의 8 / 0 (ping6)</td></tr>
+    <tr><td>133 / 134</td><td>Router Solicitation / RA</td><td>SLAAC, 게이트웨이 학습</td></tr>
+    <tr><td>135 / 136</td><td>Neighbor Solicitation / NA</td><td>ARP 대체</td></tr>
+    <tr><td>137</td><td>Redirect</td><td>v4의 Type 5</td></tr>
+  </tbody>
+</DataTable>
+
+자세한 NDP · SLAAC는 [ARP 페이지](/docs/arp#ipv6에는-arp가-없다-ndp)에서.
+
+<Eyebrow>운영 함정</Eyebrow>
+
+## 자주 만나는 사고
+
+<PCBox>
+  <PC tone="bad" title="ICMP 전체 차단">
+    <ul>
+      <li>"외부에서 ping 막아라"가 *모든 ICMP* 차단으로 확대된 케이스</li>
+      <li>PMTUD blackhole · traceroute 진단 불가 · MTU mismatch 영구화</li>
+      <li>대책: <strong>Type 3 (Unreachable) · Type 11 (Time Exceeded)은 허용</strong>, Type 8 (Echo)만 선택적으로</li>
+    </ul>
+  </PC>
+  <PC tone="bad" title="ICMP Redirect 악용">
+    <ul>
+      <li>로컬 네트워크의 다른 호스트가 Type 5 Redirect로 게이트웨이를 자기로 유도</li>
+      <li>중간자 시도</li>
+      <li>대책: <code>net.ipv4.conf.all.accept_redirects=0</code></li>
+    </ul>
+  </PC>
+</PCBox>
+
+```bash
+# 진단
+ping -M do -s 1472 8.8.8.8     # DF set, payload 1472 (MTU 1500 기준)
+traceroute -n -I 8.8.8.8        # ICMP traceroute
+mtr -n 8.8.8.8                  # 지속 측정
+tcpdump -i any icmp -nn         # ICMP 캡처
+```
