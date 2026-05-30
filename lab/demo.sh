@@ -12,7 +12,7 @@ b=$'\033[1m'; cy=$'\033[36m'; gr=$'\033[32m'; rs=$'\033[0m'
 if [[ $# -gt 0 ]]; then
   targets=("$@")
 else
-  targets=(01-arp 02-ip-routing 03-dhcp 04-dns 05-tcp-udp 06-http-tls)
+  targets=(01-arp 02-ip-routing 03-dhcp 04-dns 05-tcp-udp 06-http-tls 07-icmp)
 fi
 
 clear

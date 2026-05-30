@@ -11,6 +11,7 @@
 | 04 | [04-dns.md](04-dns.md) | DNS (이름 -> 주소 질의/응답) | L2 실무 | `dns.mdx` |
 | 05 | [05-tcp-udp.md](05-tcp-udp.md) | TCP 핸드셰이크 vs UDP | L4 | `tcp-udp.mdx` |
 | 06 | [06-http-tls.md](06-http-tls.md) | HTTP vs HTTPS (평문/암호문, SNI) | L7 | `http.mdx`, `tls.mdx` |
+| 07 | [07-icmp.md](07-icmp.md) | ICMP (echo / time exceeded / unreachable) | L3 보조 | `icmp.mdx` |
 
 ## 직접 보기
 
