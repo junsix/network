@@ -19,6 +19,7 @@
 | 12 | [12-iperf-tcp.md](12-iperf-tcp.md) | iperf3 TCP 처리량/대역폭/손실·재전송 | L4 | `tcp-udp.mdx` |
 | 13 | [13-dns-rr.md](13-dns-rr.md) | DNS 라운드로빈 vs L7 LB | L7/분산 | `dns.mdx`, `advanced/cdn-lb.mdx` |
 | 14 | [14-sockets.md](14-sockets.md) | 소켓 (LISTEN/ESTABLISHED/TIME_WAIT, 4-tuple) | L4 | `tcp-udp.mdx`, `advanced/numbers.mdx` |
+| 15 | [15-concurrency.md](15-concurrency.md) | 동시성 모델 (워커 점유 vs 이벤트 기반) + 개념 정리 | 백엔드/L4 | `advanced/numbers.mdx` |
 
 ## 직접 보기
 
